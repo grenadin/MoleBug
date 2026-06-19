@@ -145,51 +145,67 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
 
-        SectionTitle(stringResource(R.string.section_permissions_needed))
-        PermissionRow(
-            label = stringResource(R.string.perm_overlay), granted = overlayOk,
-            onClick = {
-                context.startActivity(
-                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                )
-            }
-        )
-        PermissionRow(
-            label = stringResource(R.string.perm_usage_access), granted = usageOk,
-            onClick = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-        )
-        PermissionRow(
-            label = stringResource(R.string.perm_accessibility), granted = a11yOk,
-            onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-        )
+        var permissionsExpanded by remember { mutableStateOf(true) }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { permissionsExpanded = !permissionsExpanded }
+        ) {
+            Text(
+                stringResource(R.string.section_permissions_needed),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f).padding(vertical = 8.dp)
+            )
+            Text(if (permissionsExpanded) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
+        }
 
-        val readLogsOk = remember { CaptureManager.hasReadLogsPermission(context) }
-        val dumpOk = remember { CaptureManager.hasDumpPermission(context) }
-        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        if (permissionsExpanded) {
+            PermissionRow(
+                label = stringResource(R.string.perm_overlay), granted = overlayOk,
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                    )
+                }
+            )
+            PermissionRow(
+                label = stringResource(R.string.perm_usage_access), granted = usageOk,
+                onClick = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+            )
+            PermissionRow(
+                label = stringResource(R.string.perm_accessibility), granted = a11yOk,
+                onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            )
 
-        OptionalAdbPermissionRow(
-            granted = readLogsOk,
-            label = stringResource(R.string.read_logs_label),
-            hint = stringResource(R.string.read_logs_hint),
-            adbCmd = "adb shell pm grant ${context.packageName} android.permission.READ_LOGS",
-            clipboard = clipboard
-        )
-        Spacer(Modifier.height(8.dp))
-        OptionalAdbPermissionRow(
-            granted = dumpOk,
-            label = stringResource(R.string.dump_permission_label),
-            hint = stringResource(R.string.dump_permission_hint),
-            adbCmd = "adb shell pm grant ${context.packageName} android.permission.DUMP",
-            clipboard = clipboard
-        )
-        Button(
-            onClick = {
-                overlayOk = hasOverlayPermission(context)
-                usageOk = hasUsageAccess(context)
-                a11yOk = isAccessibilityServiceEnabled(context)
-            },
-            modifier = Modifier.padding(top = 8.dp)
-        ) { Text(stringResource(R.string.recheck_permissions)) }
+            val readLogsOk = remember { CaptureManager.hasReadLogsPermission(context) }
+            val dumpOk = remember { CaptureManager.hasDumpPermission(context) }
+            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
+            OptionalAdbPermissionRow(
+                granted = readLogsOk,
+                label = stringResource(R.string.read_logs_label),
+                hint = stringResource(R.string.read_logs_hint),
+                adbCmd = "adb shell pm grant ${context.packageName} android.permission.READ_LOGS",
+                clipboard = clipboard
+            )
+            Spacer(Modifier.height(8.dp))
+            OptionalAdbPermissionRow(
+                granted = dumpOk,
+                label = stringResource(R.string.dump_permission_label),
+                hint = stringResource(R.string.dump_permission_hint),
+                adbCmd = "adb shell pm grant ${context.packageName} android.permission.DUMP",
+                clipboard = clipboard
+            )
+            Button(
+                onClick = {
+                    overlayOk = hasOverlayPermission(context)
+                    usageOk = hasUsageAccess(context)
+                    a11yOk = isAccessibilityServiceEnabled(context)
+                },
+                modifier = Modifier.padding(top = 8.dp)
+            ) { Text(stringResource(R.string.recheck_permissions)) }
+        }
 
         Spacer(Modifier.height(16.dp))
         Divider()
