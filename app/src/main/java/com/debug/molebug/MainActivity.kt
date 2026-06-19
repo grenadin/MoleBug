@@ -122,10 +122,10 @@ object DeviceInspector {
         val dir = File(context.getExternalFilesDir(null), "logs")
         if (!dir.exists()) dir.mkdirs()
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val file = File(dir, "deduck_log_$ts.txt")
+        val file = File(dir, "mole_log_$ts.txt")
 
         val sb = StringBuilder()
-        sb.appendLine("===== DeDuck Debug Log =====")
+        sb.appendLine("===== MoleBug Debug Log =====")
         sb.appendLine("Timestamp: $ts")
         sb.appendLine()
         sb.appendLine("---- Device Info ----")
@@ -190,7 +190,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun DeDuckApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {}) {
+fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val deviceInfo = remember { DeviceInspector.getDeviceInfo(context) }
     val checks = remember {

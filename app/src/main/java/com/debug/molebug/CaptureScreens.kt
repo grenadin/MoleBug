@@ -31,7 +31,7 @@ fun MoleBugRoot(screenState: MutableState<Screen> = remember { mutableStateOf(Sc
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             when (screen) {
-                Screen.HOME -> DeDuckApp(
+                Screen.HOME -> MoleBugApp(
                     onOpenCapture = { screen = Screen.TARGET_PICKER },
                     onOpenLogViewer = { screen = Screen.LOG_VIEWER }
                 )
