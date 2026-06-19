@@ -1,0 +1,65 @@
+<resources>
+    <string name="app_name">MoleBug</string>
+    <string name="accessibility_service_description">MoleBug uses this permission to detect when the target app comes to the foreground and to detect the system\'s "app has stopped" dialog, only to record event logs. It does not read private data in other apps.</string>
+
+    <!-- Home screen -->
+    <string name="app_title">MoleBug — Debug Checker</string>
+    <string name="section_device_info">Device Information</string>
+    <string name="info_device_name">1. Device name</string>
+    <string name="info_model">2. Model</string>
+    <string name="info_build_number">3. Build number</string>
+    <string name="info_software_version">4. Software version</string>
+    <string name="info_emui_version">5. EMUI version</string>
+    <string name="section_check_components">Check Basic Apps</string>
+    <string name="button_export_log">Get Installed App List + Save Log</string>
+    <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
+    <string name="status_log_saved">Log saved: %1$s</string>
+    <string name="status_file_path">File: %1$s</string>
+    <string name="section_capture_other_app">Capture Other App\'s Log Events</string>
+    <string name="capture_intro">Pick a target app and capture crash/ANR events (event-based, not real logcat, since this device isn\'t rooted)</string>
+    <string name="button_go_capture">Go to Target App Log Capture</string>
+    <string name="button_view_log">View Current/Latest Capture Log</string>
+
+    <!-- Component check rows -->
+    <string name="component_version">Version: %1$s (code %2$d)</string>
+    <string name="component_installer">Installed from: %1$s</string>
+    <string name="component_not_installed">Not installed</string>
+    <string name="emui_not_found">Not found (not an EMUI device, or unreadable)</string>
+    <string name="installer_unknown">Unknown source (sideload?)</string>
+    <string name="installer_read_failed">Read failed: %1$s</string>
+
+    <!-- Target picker screen -->
+    <string name="back_button">← Back</string>
+    <string name="target_picker_title">Select Target App</string>
+    <string name="section_permissions_needed">Permissions Needed (one-time setup)</string>
+    <string name="perm_overlay">Overlay (show blinking red badge)</string>
+    <string name="perm_usage_access">Usage Access (see foreground/background timing)</string>
+    <string name="perm_accessibility">Accessibility Service (detect crash dialog)</string>
+    <string name="perm_open_button">Open Permission</string>
+    <string name="read_logs_label">READ_LOGS (get real stack traces like adb logcat — optional)</string>
+    <string name="read_logs_hint">If you skip this step, capture will only get events (foreground/background/dialog) like before</string>
+    <string name="read_logs_instructions">Run this command from a PC once (connect via cable or wireless debugging):</string>
+    <string name="copy_command">Copy Command</string>
+    <string name="recheck_permissions">Recheck Permissions</string>
+    <string name="section_target_app">Target App</string>
+    <string name="button_grant_perms_first">Please grant all permissions first</string>
+    <string name="button_start_capture">Start Capturing Log (after tapping, open the target app yourself)</string>
+    <string name="start_capture_hint">After tapping this, capture hasn\'t started yet — it starts automatically once you open the target app</string>
+
+    <!-- Log viewer screen -->
+    <string name="log_viewer_title">Log: %1$s</string>
+    <string name="status_capturing">🔴 Capturing log… (%1$d crash(es) so far)</string>
+    <string name="status_armed">🟡 Waiting — target app not opened yet</string>
+    <string name="status_idle">⚪ Not capturing (total %1$d crash(es))</string>
+    <string name="button_stop_capture">⏹ Stop Capturing Log Now</string>
+    <string name="log_empty">(no log yet)</string>
+    <string name="button_saved_automatically">Saved Automatically</string>
+    <string name="button_share_file">Share File</string>
+    <string name="share_chooser_title">Share log file</string>
+
+    <!-- Capture notification -->
+    <string name="notif_channel_name">MoleBug Capture</string>
+    <string name="notif_title">MoleBug is capturing log: %1$s</string>
+    <string name="notif_text">Tap to open the app, or stop below</string>
+    <string name="notif_action_stop">Stop Capturing</string>
+</resources>

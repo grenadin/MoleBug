@@ -1,0 +1,65 @@
+<resources>
+    <string name="app_name">MoleBug</string>
+    <string name="accessibility_service_description">MoleBug ใช้สิทธิ์นี้เพื่อตรวจจับว่าแอปเป้าหมายขึ้น foreground และตรวจจับหน้าต่าง "แอปหยุดทำงาน" ของระบบ เพื่อเก็บ log เหตุการณ์เท่านั้น ไม่อ่านข้อมูลส่วนตัวในแอปอื่น</string>
+
+    <!-- Home screen -->
+    <string name="app_title">MoleBug — Debug Checker</string>
+    <string name="section_device_info">ข้อมูลอุปกรณ์</string>
+    <string name="info_device_name">1. ชื่ออุปกรณ์</string>
+    <string name="info_model">2. ชื่อรุ่น</string>
+    <string name="info_build_number">3. หมายเลขรุ่น (Build)</string>
+    <string name="info_software_version">4. เวอร์ชันซอฟต์แวร์</string>
+    <string name="info_emui_version">5. เวอร์ชัน EMUI</string>
+    <string name="section_check_components">ตรวจสอบแอปพื้นฐาน</string>
+    <string name="button_export_log">ดึงรายการแอปที่ติดตั้ง + บันทึก Log</string>
+    <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
+    <string name="status_log_saved">บันทึก log สำเร็จ: %1$s</string>
+    <string name="status_file_path">ไฟล์: %1$s</string>
+    <string name="section_capture_other_app">จับ Log เหตุการณ์ของแอปอื่น</string>
+    <string name="capture_intro">เลือกแอปเป้าหมาย แล้วจับเหตุการณ์ crash/ANR แบบ event-based (ไม่ใช่ logcat จริง เพราะเครื่องไม่ได้ root)</string>
+    <string name="button_go_capture">ไปหน้าจับ Log แอปเป้าหมาย</string>
+    <string name="button_view_log">ดู Log ที่กำลังจับ / จับล่าสุด</string>
+
+    <!-- Component check rows -->
+    <string name="component_version">เวอร์ชัน: %1$s (code %2$d)</string>
+    <string name="component_installer">แหล่งที่ติดตั้ง: %1$s</string>
+    <string name="component_not_installed">ยังไม่ได้ติดตั้ง</string>
+    <string name="emui_not_found">ไม่พบ (ไม่ใช่เครื่อง EMUI หรืออ่านไม่ได้)</string>
+    <string name="installer_unknown">ไม่ทราบแหล่งที่มา (sideload?)</string>
+    <string name="installer_read_failed">อ่านไม่ได้: %1$s</string>
+
+    <!-- Target picker screen -->
+    <string name="back_button">← กลับ</string>
+    <string name="target_picker_title">เลือกแอปเป้าหมาย</string>
+    <string name="section_permissions_needed">สิทธิ์ที่ต้องเปิดก่อน (ทำครั้งเดียว)</string>
+    <string name="perm_overlay">Overlay (แสดงป้ายแดงกระพริบ)</string>
+    <string name="perm_usage_access">Usage Access (ดูจังหวะ foreground/background)</string>
+    <string name="perm_accessibility">Accessibility Service (ตรวจจับ dialog หยุดทำงาน)</string>
+    <string name="perm_open_button">เปิดสิทธิ์</string>
+    <string name="read_logs_label">READ_LOGS (ได้ stack trace จริงแบบ adb logcat — ไม่บังคับ)</string>
+    <string name="read_logs_hint">ถ้าไม่ทำขั้นนี้ จะจับได้แค่ event (foreground/background/dialog) เหมือนเดิม</string>
+    <string name="read_logs_instructions">รันคำสั่งนี้จาก PC ครั้งเดียว (ต่อ adb ผ่านสายหรือ wireless debugging):</string>
+    <string name="copy_command">คัดลอกคำสั่ง</string>
+    <string name="recheck_permissions">รีเช็คสิทธิ์</string>
+    <string name="section_target_app">แอปเป้าหมาย</string>
+    <string name="button_grant_perms_first">กรุณาเปิดสิทธิ์ให้ครบก่อน</string>
+    <string name="button_start_capture">เริ่มจับ Log (เมื่อกดแล้วให้กดเปิดแอปเป้าหมายเอง)</string>
+    <string name="start_capture_hint">หลังกดปุ่มนี้ ระบบจะยังไม่เริ่มเก็บ — จะเริ่มอัตโนมัติเมื่อคุณกดเปิดแอปเป้าหมายจริง</string>
+
+    <!-- Log viewer screen -->
+    <string name="log_viewer_title">Log: %1$s</string>
+    <string name="status_capturing">🔴 กำลังจับ log… (พังไปแล้ว %1$d รอบ)</string>
+    <string name="status_armed">🟡 รออยู่ — ยังไม่เปิดแอปเป้าหมาย</string>
+    <string name="status_idle">⚪ ไม่ได้จับ log อยู่ (รวมพังทั้งหมด %1$d รอบ)</string>
+    <string name="button_stop_capture">⏹ หยุดจับ Log เดี๋ยวนี้</string>
+    <string name="log_empty">(ยังไม่มี log)</string>
+    <string name="button_saved_automatically">บันทึกแล้วอัตโนมัติ</string>
+    <string name="button_share_file">ส่งไฟล์ (แชร์)</string>
+    <string name="share_chooser_title">ส่งไฟล์ log</string>
+
+    <!-- Capture notification -->
+    <string name="notif_channel_name">MoleBug บันทึก Log</string>
+    <string name="notif_title">MoleBug กำลังจับ log: %1$s</string>
+    <string name="notif_text">แตะเพื่อเปิดแอป หรือกดหยุดด้านล่าง</string>
+    <string name="notif_action_stop">หยุดจับ Log</string>
+</resources>
