@@ -9,17 +9,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.debug.molebug.capture.CaptureManager
+import kotlinx.coroutines.launch
 import java.io.File
 
 enum class Screen { HOME, TARGET_PICKER, LOG_VIEWER }
@@ -81,6 +84,35 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
     var overlayOk by remember { mutableStateOf(hasOverlayPermission(context)) }
     var usageOk by remember { mutableStateOf(hasUsageAccess(context)) }
     var a11yOk by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
+
+    var searchQuery by remember { mutableStateOf("") }
+    var searchByPackage by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    val displayedApps = remember(apps, searchQuery, searchByPackage) {
+        if (searchQuery.isBlank()) {
+            apps
+        } else {
+            apps.filter { app ->
+                val haystack = if (searchByPackage) app.pkg else app.label
+                haystack.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    // Maps each first letter present in the (unfiltered, alphabetically-sorted) app list to
+    // its index, so the A-Z strip can jump straight to where that letter's apps begin.
+    val letterIndex = remember(apps) {
+        val map = linkedMapOf<Char, Int>()
+        apps.forEachIndexed { index, app ->
+            val letter = app.label.firstOrNull()?.uppercaseChar()
+            if (letter != null && letter in 'A'..'Z' && letter !in map) {
+                map[letter] = index
+            }
+        }
+        map
+    }
 
     LaunchedEffect(Unit) {
         apps = DeviceInspector.listInstalledApps(context)
@@ -160,20 +192,83 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         Spacer(Modifier.height(8.dp))
 
         SectionTitle(stringResource(R.string.section_target_app))
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(apps) { app ->
-                ListItem(
-                    headlineContent = { Text(app.label) },
-                    supportingContent = { Text(app.pkg, style = MaterialTheme.typography.bodySmall) },
-                    trailingContent = {
-                        RadioButton(
-                            selected = selectedPkg == app.pkg,
-                            onClick = { selectedPkg = app.pkg }
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            label = { Text(stringResource(R.string.search_apps_label)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.search_mode_label), style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = !searchByPackage,
+                onClick = { searchByPackage = false },
+                label = { Text(stringResource(R.string.search_by_name)) }
+            )
+            Spacer(Modifier.width(4.dp))
+            FilterChip(
+                selected = searchByPackage,
+                onClick = { searchByPackage = true },
+                label = { Text(stringResource(R.string.search_by_package)) }
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+                items(displayedApps) { app ->
+                    ListItem(
+                        headlineContent = { Text(app.label) },
+                        supportingContent = { Text(app.pkg, style = MaterialTheme.typography.bodySmall) },
+                        trailingContent = {
+                            RadioButton(
+                                selected = selectedPkg == app.pkg,
+                                onClick = { selectedPkg = app.pkg }
+                            )
+                        },
+                        modifier = Modifier.clickable { selectedPkg = app.pkg }
+                    )
+                    Divider()
+                }
+            }
+
+            // A-Z fast-scroll index, shown only while the search box is empty so it can jump
+            // around the full unfiltered list instead of a filtered subset.
+            if (searchQuery.isBlank() && letterIndex.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    ('A'..'Z').forEach { letter ->
+                        val available = letterIndex.containsKey(letter)
+                        Text(
+                            letter.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (available)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                            modifier = Modifier
+                                .padding(vertical = 1.dp, horizontal = 4.dp)
+                                .clickable {
+                                    val keys = letterIndex.keys.sorted()
+                                    val targetIndex = letterIndex[letter]
+                                        ?: keys.firstOrNull { it >= letter }?.let { letterIndex[it] }
+                                        ?: keys.lastOrNull()?.let { letterIndex[it] }
+                                    targetIndex?.let { idx ->
+                                        coroutineScope.launch { listState.scrollToItem(idx) }
+                                    }
+                                }
                         )
-                    },
-                    modifier = Modifier.clickable { selectedPkg = app.pkg }
-                )
-                Divider()
+                    }
+                }
             }
         }
 

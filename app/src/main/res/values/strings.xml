@@ -44,6 +44,10 @@
     <string name="copy_command">Copy Command</string>
     <string name="recheck_permissions">Recheck Permissions</string>
     <string name="section_target_app">Target App</string>
+    <string name="search_apps_label">Search apps</string>
+    <string name="search_mode_label">Search by:</string>
+    <string name="search_by_name">App name</string>
+    <string name="search_by_package">Package name</string>
     <string name="button_grant_perms_first">Please grant all permissions first</string>
     <string name="button_start_capture">Start Capturing Log (opens the target app for you)</string>
     <string name="start_capture_hint">Tapping this will open the target app automatically — capture starts as soon as it comes to the foreground</string>
