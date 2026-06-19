@@ -43,8 +43,8 @@
     <string name="recheck_permissions">รีเช็คสิทธิ์</string>
     <string name="section_target_app">แอปเป้าหมาย</string>
     <string name="button_grant_perms_first">กรุณาเปิดสิทธิ์ให้ครบก่อน</string>
-    <string name="button_start_capture">เริ่มจับ Log (เมื่อกดแล้วให้กดเปิดแอปเป้าหมายเอง)</string>
-    <string name="start_capture_hint">หลังกดปุ่มนี้ ระบบจะยังไม่เริ่มเก็บ — จะเริ่มอัตโนมัติเมื่อคุณกดเปิดแอปเป้าหมายจริง</string>
+    <string name="button_start_capture">เริ่มจับ Log (ระบบจะเปิดแอปเป้าหมายให้อัตโนมัติ)</string>
+    <string name="start_capture_hint">กดปุ่มนี้แล้วแอปเป้าหมายจะเปิดขึ้นมาให้อัตโนมัติ — เริ่มจับ log ทันทีที่แอปนั้นขึ้น foreground</string>
 
     <!-- Log viewer screen -->
     <string name="log_viewer_title">Log: %1$s</string>

@@ -197,11 +197,19 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 selectedPkg?.let {
                     CaptureManager.arm(context, it)
                     onArmed()
-                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(it)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(launchIntent)
+                    } else {
+                        // No launchable activity found for this package -> fall back to the
+                        // system home screen so the user can open it manually themselves.
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(homeIntent)
                     }
-                    context.startActivity(homeIntent)
                 }
             },
             enabled = allPermsOk && selectedPkg != null,
