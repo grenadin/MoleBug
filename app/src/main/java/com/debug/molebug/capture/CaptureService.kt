@@ -8,6 +8,8 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -44,6 +46,9 @@ class CaptureService : Service() {
     @Volatile private var logcatRunning = false
     private var logcatProcess: Process? = null
     private var anrWatcherProcess: Process? = null
+    private var lmkWatcherProcess: Process? = null
+    private var currentPid = -1
+    private val memoryHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -81,21 +86,27 @@ class CaptureService : Service() {
         val pkg = targetPkg ?: return
         dumpLogcatBacklog(pkg)
         startAnrWatcher(pkg)
+        startLmkWatcher(pkg)
+        startMemoryPolling()
         logcatThread = Thread {
             var lastPid = -1
             while (logcatRunning) {
                 val pid = findPid(pkg)
-                if (pid != null && pid != lastPid) {
-                    // target (re)started with a new pid -> attach fresh logcat stream
-                    logcatProcess?.destroy()
-                    lastPid = pid
-                    CaptureManager.appendLog(applicationContext, "[LOGCAT] attach pid=$pid ($pkg)")
-                    attachLogcatForPid(pid)
-                } else if (pid == null && lastPid != -1) {
-                    CaptureManager.appendLog(applicationContext, "[LOGCAT] pid $lastPid disappeared (process died/restarted) — waiting for new pid")
-                    logcatProcess?.destroy()
-                    logcatProcess = null
-                    lastPid = -1
+                if (pid != lastPid) {
+                    // pid changed (new launch, crash-restart, or process died with nothing
+                    // new yet) -> look up the official exit reason for whatever pid just left
+                    if (lastPid != -1) checkExitReason(pkg, lastPid)
+                    if (pid != null) {
+                        logcatProcess?.destroy()
+                        CaptureManager.appendLog(applicationContext, "[LOGCAT] attach pid=$pid ($pkg)")
+                        attachLogcatForPid(pid)
+                    } else {
+                        CaptureManager.appendLog(applicationContext, "[LOGCAT] pid $lastPid disappeared (process died/restarted) — waiting for new pid")
+                        logcatProcess?.destroy()
+                        logcatProcess = null
+                    }
+                    currentPid = pid ?: -1
+                    lastPid = currentPid
                 }
                 Thread.sleep(500)
             }
@@ -155,6 +166,7 @@ class CaptureService : Service() {
                         CaptureManager.appendLog(applicationContext, "[LOGCAT] $line")
                         if (line.contains("FATAL EXCEPTION") || line.contains("AndroidRuntime")) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-CRASH] Found a real crash stack trace, see lines above")
+                            CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
                         }
                     }
                 } catch (e: Exception) {
@@ -183,6 +195,7 @@ class CaptureService : Service() {
                         if (line.contains(pkg, ignoreCase = true) && anrKeywords.any { line.contains(it) }) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] $line")
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
+                            CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
                         }
                     }
                 } catch (e: Exception) {
@@ -194,12 +207,136 @@ class CaptureService : Service() {
         }
     }
 
+    private val lmkKeywords = listOf("Killed process", "lowmemorykiller", "Out of memory")
+
+    /** Low-memory-killer terminations show up in the kernel log buffer, not main/system/crash,
+     *  and (like ANR) are not attributed to the target app's own pid. Tail it unfiltered for
+     *  the whole session so a background OOM-kill isn't mistaken for a crash. */
+    private fun startLmkWatcher(pkg: String) {
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "threadtime", "-b", "kernel"))
+            lmkWatcherProcess = process
+            Thread {
+                try {
+                    process.inputStream.bufferedReader().forEachLine { line ->
+                        if (!logcatRunning) return@forEachLine
+                        if (line.contains(pkg, ignoreCase = true) && lmkKeywords.any { line.contains(it, ignoreCase = true) }) {
+                            CaptureManager.appendLog(applicationContext, "[LMK] $line")
+                            CaptureManager.appendLog(applicationContext, "[LMK] The system's low-memory killer terminated $pkg — likely an OOM kill, not a crash")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // process destroyed/pipe closed — normal on stop
+                }
+            }.apply { isDaemon = true }.start()
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[LMK] Failed to start low-memory-killer watcher: ${e.message}")
+        }
+    }
+
+    /** Periodic PSS memory snapshot of the target's current pid, so a log full of crash text
+     *  can also show whether the process was already under memory pressure beforehand. */
+    private fun startMemoryPolling() {
+        val r = object : Runnable {
+            override fun run() {
+                if (!logcatRunning) return
+                val pid = currentPid
+                if (pid != -1) {
+                    CaptureManager.appendLog(applicationContext, "[MEMORY] pid=$pid ${memorySnapshot(pid)}")
+                }
+                memoryHandler.postDelayed(this, 5000)
+            }
+        }
+        memoryHandler.postDelayed(r, 5000)
+    }
+
+    private fun memorySnapshot(pid: Int): String {
+        return try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val info = am.getProcessMemoryInfo(intArrayOf(pid)).firstOrNull()
+            if (info != null) "TotalPss=${info.totalPss}KB" else "unavailable (process may have already died)"
+        } catch (e: Exception) {
+            "failed to read: ${e.message}"
+        }
+    }
+
+    private fun networkSnapshot(): String {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return "no active network"
+            val caps = cm.getNetworkCapabilities(network) ?: return "active network but no capabilities"
+            val transport = when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
+                else -> "OTHER"
+            }
+            val internet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            "$transport, internet=$internet, validated=$validated"
+        } catch (e: Exception) {
+            "failed to read: ${e.message}"
+        }
+    }
+
+    /** Official OS-reported reason a process exited (crash/ANR/low-memory/signaled/etc.),
+     *  straight from ActivityManager — distinguishes "crashed" from "was killed for memory"
+     *  from "user swiped it away" far more reliably than guessing from logcat text alone.
+     *  Querying another app's exit reasons requires android.permission.DUMP (one-time
+     *  `adb shell pm grant` like READ_LOGS) — falls back to a hint if not granted. */
+    private fun checkExitReason(pkg: String, pid: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val info = am.getHistoricalProcessExitReasons(pkg, pid, 1).firstOrNull()
+            if (info != null) {
+                CaptureManager.appendLog(
+                    applicationContext,
+                    "[EXIT-REASON] pid=$pid reason=${exitReasonName(info.reason)} " +
+                            "description=\"${info.description}\" importance=${info.importance}"
+                )
+            } else {
+                CaptureManager.appendLog(applicationContext, "[EXIT-REASON] No exit reason record found yet for pid=$pid")
+            }
+        } catch (e: SecurityException) {
+            CaptureManager.appendLog(
+                applicationContext,
+                "[EXIT-REASON] No DUMP permission — skipping official exit reason lookup. " +
+                        "Grant it once via: adb shell pm grant ${applicationContext.packageName} android.permission.DUMP"
+            )
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[EXIT-REASON] Failed to query exit reason: ${e.message}")
+        }
+    }
+
+    private fun exitReasonName(reason: Int): String = when (reason) {
+        ApplicationExitInfo.REASON_ANR -> "ANR"
+        ApplicationExitInfo.REASON_CRASH -> "CRASH"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH_NATIVE"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "LOW_MEMORY"
+        ApplicationExitInfo.REASON_SIGNALED -> "SIGNALED"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "USER_REQUESTED"
+        ApplicationExitInfo.REASON_USER_STOPPED -> "USER_STOPPED"
+        ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "DEPENDENCY_DIED"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "EXCESSIVE_RESOURCE_USAGE"
+        ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "INITIALIZATION_FAILURE"
+        ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "PERMISSION_CHANGE"
+        ApplicationExitInfo.REASON_EXIT_SELF -> "EXIT_SELF"
+        ApplicationExitInfo.REASON_OTHER -> "OTHER"
+        ApplicationExitInfo.REASON_UNKNOWN -> "UNKNOWN"
+        else -> "REASON_$reason"
+    }
+
     private fun stopLogcatCapture() {
         logcatRunning = false
         logcatProcess?.destroy()
         logcatProcess = null
         anrWatcherProcess?.destroy()
         anrWatcherProcess = null
+        lmkWatcherProcess?.destroy()
+        lmkWatcherProcess = null
+        memoryHandler.removeCallbacksAndMessages(null)
+        currentPid = -1
     }
 
     private fun buildNotification(): Notification {

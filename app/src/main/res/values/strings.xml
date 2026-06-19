@@ -39,6 +39,8 @@
     <string name="read_logs_label">READ_LOGS (get real stack traces like adb logcat — optional)</string>
     <string name="read_logs_hint">If you skip this step, capture will only get events (foreground/background/dialog) like before</string>
     <string name="read_logs_instructions">Run this command from a PC once (connect via cable or wireless debugging):</string>
+    <string name="dump_permission_label">DUMP (get the official OS exit reason — crash/ANR/low-memory/etc. — optional)</string>
+    <string name="dump_permission_hint">If you skip this step, you still get logcat-based crash/ANR detection, just not the official OS-reported exit reason</string>
     <string name="copy_command">Copy Command</string>
     <string name="recheck_permissions">Recheck Permissions</string>
     <string name="section_target_app">Target App</string>

@@ -85,4 +85,11 @@ object CaptureManager {
     fun hasReadLogsPermission(context: Context): Boolean =
         context.checkSelfPermission(android.Manifest.permission.READ_LOGS) ==
                 PackageManager.PERMISSION_GRANTED
+
+    /** True only if `adb shell pm grant <pkg> android.permission.DUMP` was run once.
+     *  Needed to read another app's official process-exit reason (crash/ANR/low-memory/etc.)
+     *  via ActivityManager#getHistoricalProcessExitReasons — optional, capture works without it. */
+    fun hasDumpPermission(context: Context): Boolean =
+        context.checkSelfPermission(android.Manifest.permission.DUMP) ==
+                PackageManager.PERMISSION_GRANTED
 }

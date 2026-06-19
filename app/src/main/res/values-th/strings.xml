@@ -39,6 +39,8 @@
     <string name="read_logs_label">READ_LOGS (ได้ stack trace จริงแบบ adb logcat — ไม่บังคับ)</string>
     <string name="read_logs_hint">ถ้าไม่ทำขั้นนี้ จะจับได้แค่ event (foreground/background/dialog) เหมือนเดิม</string>
     <string name="read_logs_instructions">รันคำสั่งนี้จาก PC ครั้งเดียว (ต่อ adb ผ่านสายหรือ wireless debugging):</string>
+    <string name="dump_permission_label">DUMP (ได้เหตุผลที่แอปถูกปิดจากระบบจริง — crash/ANR/low-memory/ฯลฯ — ไม่บังคับ)</string>
+    <string name="dump_permission_hint">ถ้าไม่ทำขั้นนี้ ก็ยังตรวจ crash/ANR จาก logcat ได้เหมือนเดิม แค่ไม่ได้เหตุผลที่ระบบรายงานเองมาด้วย</string>
     <string name="copy_command">คัดลอกคำสั่ง</string>
     <string name="recheck_permissions">รีเช็คสิทธิ์</string>
     <string name="section_target_app">แอปเป้าหมาย</string>

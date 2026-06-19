@@ -128,37 +128,24 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         )
 
         val readLogsOk = remember { CaptureManager.hasReadLogsPermission(context) }
+        val dumpOk = remember { CaptureManager.hasDumpPermission(context) }
         val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-        val adbCmd = "adb shell pm grant ${context.packageName} android.permission.READ_LOGS"
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text(if (readLogsOk) "✅" else "⚠️", modifier = Modifier.padding(end = 8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.read_logs_label),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                if (!readLogsOk) {
-                    Text(
-                        stringResource(R.string.read_logs_hint),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-        if (!readLogsOk) {
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Text(stringResource(R.string.read_logs_instructions), style = MaterialTheme.typography.bodySmall)
-                    SelectionContainer {
-                        Text(adbCmd, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-                    }
-                    TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(adbCmd)) }) {
-                        Text(stringResource(R.string.copy_command))
-                    }
-                }
-            }
-        }
+
+        OptionalAdbPermissionRow(
+            granted = readLogsOk,
+            label = stringResource(R.string.read_logs_label),
+            hint = stringResource(R.string.read_logs_hint),
+            adbCmd = "adb shell pm grant ${context.packageName} android.permission.READ_LOGS",
+            clipboard = clipboard
+        )
+        Spacer(Modifier.height(8.dp))
+        OptionalAdbPermissionRow(
+            granted = dumpOk,
+            label = stringResource(R.string.dump_permission_label),
+            hint = stringResource(R.string.dump_permission_hint),
+            adbCmd = "adb shell pm grant ${context.packageName} android.permission.DUMP",
+            clipboard = clipboard
+        )
         Button(
             onClick = {
                 overlayOk = hasOverlayPermission(context)
@@ -226,6 +213,38 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 4.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun OptionalAdbPermissionRow(
+    granted: Boolean,
+    label: String,
+    hint: String,
+    adbCmd: String,
+    clipboard: androidx.compose.ui.platform.ClipboardManager
+) {
+    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Text(if (granted) "✅" else "⚠️", modifier = Modifier.padding(end = 8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (!granted) {
+                Text(hint, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+    if (!granted) {
+        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text(stringResource(R.string.read_logs_instructions), style = MaterialTheme.typography.bodySmall)
+                SelectionContainer {
+                    Text(adbCmd, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                }
+                TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(adbCmd)) }) {
+                    Text(stringResource(R.string.copy_command))
+                }
+            }
         }
     }
 }
