@@ -3,13 +3,23 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.debug.molebug">
 
-    <!-- Needed on Android 11+ (API 30+) to query installed packages by name -->
+    <!-- Needed on Android 11+ (API 30+) to query installed packages by name
+         for the Feature A system check, kept even though QUERY_ALL_PACKAGES below
+         already covers it, in case that permission is ever removed/blocked. -->
     <queries>
         <package android:name="com.google.android.gms" />
         <package android:name="com.google.android.gsf" />
         <package android:name="com.android.vending" />
         <package android:name="com.aurora.store" />
     </queries>
+
+    <!-- Without this, getInstalledPackages() on API 30+ is filtered down to only the
+         packages declared in <queries> above, so the target-app picker (Feature B)
+         would never see most installed apps (e.g. LINE). This is a sideloaded personal
+         debug tool, never distributed on Play Store, so the Play policy restriction on
+         this permission doesn't apply. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
