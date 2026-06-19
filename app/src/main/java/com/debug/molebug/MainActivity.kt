@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -208,7 +209,22 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp)
             ) {
-                Text(stringResource(R.string.app_title), style = MaterialTheme.typography.headlineSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.app_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Image(
+                        painter = androidx.compose.ui.res.painterResource(R.drawable.mole_badge),
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
 
                 SectionTitle(stringResource(R.string.section_device_info))
