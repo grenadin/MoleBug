@@ -43,6 +43,7 @@ class CaptureService : Service() {
     private var logcatThread: Thread? = null
     @Volatile private var logcatRunning = false
     private var logcatProcess: Process? = null
+    private var anrWatcherProcess: Process? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,6 +79,8 @@ class CaptureService : Service() {
     private fun startLogcatCapture() {
         logcatRunning = true
         val pkg = targetPkg ?: return
+        dumpLogcatBacklog(pkg)
+        startAnrWatcher(pkg)
         logcatThread = Thread {
             var lastPid = -1
             while (logcatRunning) {
@@ -102,6 +105,26 @@ class CaptureService : Service() {
         logcatThread?.start()
     }
 
+    /** One-shot dump of whatever is already sitting in the log buffers (main/system/crash)
+     *  before we ever attach to a pid, filtered down to lines mentioning the target package.
+     *  Covers crashes that happen so fast the pid-watch loop never catches a live pid for them. */
+    private fun dumpLogcatBacklog(pkg: String) {
+        try {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-d", "-v", "threadtime", "-b", "main", "-b", "system", "-b", "crash")
+            )
+            val lines = process.inputStream.bufferedReader().readLines()
+            process.waitFor()
+            val relevant = lines.filter { it.contains(pkg, ignoreCase = true) }
+            if (relevant.isNotEmpty()) {
+                CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] ${relevant.size} buffered line(s) already mentioning $pkg before capture started:")
+                relevant.forEach { CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] $it") }
+            }
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] Failed to dump backlog: ${e.message}")
+        }
+    }
+
     private fun findPid(pkg: String): Int? {
         return try {
             val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "pidof $pkg"))
@@ -113,11 +136,15 @@ class CaptureService : Service() {
         }
     }
 
-    /** Streams one `logcat --pid=PID` session on a background reader until it ends or is destroyed. */
+    private val anrKeywords = listOf("ANR in", "Input dispatching timed out", "Reason: Input dispatching timed out")
+
+    /** Streams one `logcat --pid=PID` session on a background reader until it ends or is destroyed.
+     *  Pulls from main + crash buffers — crash carries Android's own concise crash summary,
+     *  not just whatever the app itself printed to the main buffer. */
     private fun attachLogcatForPid(pid: Int) {
         try {
             val process = Runtime.getRuntime().exec(
-                arrayOf("logcat", "--pid=$pid", "-v", "threadtime")
+                arrayOf("logcat", "--pid=$pid", "-v", "threadtime", "-b", "main", "-b", "crash")
             )
             logcatProcess = process
             // Reader runs on its own thread so the pid-watch loop above isn't blocked
@@ -139,10 +166,40 @@ class CaptureService : Service() {
         }
     }
 
+    /** ANR entries are logged by system_server (ActivityManager), under system_server's own
+     *  pid — never the target app's pid — so `--pid` filtering on the target's pid can never
+     *  catch them. Instead tail the unfiltered `system` buffer for the whole capture session
+     *  and match by package name + ANR keywords in the text itself. */
+    private fun startAnrWatcher(pkg: String) {
+        try {
+            val process = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-v", "threadtime", "-b", "system")
+            )
+            anrWatcherProcess = process
+            Thread {
+                try {
+                    process.inputStream.bufferedReader().forEachLine { line ->
+                        if (!logcatRunning) return@forEachLine
+                        if (line.contains(pkg, ignoreCase = true) && anrKeywords.any { line.contains(it) }) {
+                            CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] $line")
+                            CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // process destroyed/pipe closed — normal on stop
+                }
+            }.apply { isDaemon = true }.start()
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Failed to start ANR watcher: ${e.message}")
+        }
+    }
+
     private fun stopLogcatCapture() {
         logcatRunning = false
         logcatProcess?.destroy()
         logcatProcess = null
+        anrWatcherProcess?.destroy()
+        anrWatcherProcess = null
     }
 
     private fun buildNotification(): Notification {
