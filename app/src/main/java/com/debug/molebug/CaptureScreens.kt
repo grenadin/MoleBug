@@ -211,6 +211,59 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         Divider()
         Spacer(Modifier.height(8.dp))
 
+        var captureOptionsExpanded by remember { mutableStateOf(false) }
+        var networkTimingEnabled by remember { mutableStateOf(CaptureManager.isNetworkTimingEnabled(context)) }
+        var anrTraceEnabled by remember { mutableStateOf(CaptureManager.isAnrTraceEnabled(context)) }
+        var eventsBufferEnabled by remember { mutableStateOf(CaptureManager.isEventsBufferEnabled(context)) }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { captureOptionsExpanded = !captureOptionsExpanded }
+        ) {
+            Text(
+                stringResource(R.string.section_capture_options),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f).padding(vertical = 8.dp)
+            )
+            Text(if (captureOptionsExpanded) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
+        }
+
+        if (captureOptionsExpanded) {
+            CaptureOptionRow(
+                checked = networkTimingEnabled,
+                label = stringResource(R.string.opt_network_timing_label),
+                hint = stringResource(R.string.opt_network_timing_hint),
+                onCheckedChange = {
+                    networkTimingEnabled = it
+                    CaptureManager.setNetworkTimingEnabled(context, it)
+                }
+            )
+            CaptureOptionRow(
+                checked = anrTraceEnabled,
+                label = stringResource(R.string.opt_anr_trace_label),
+                hint = stringResource(R.string.opt_anr_trace_hint),
+                onCheckedChange = {
+                    anrTraceEnabled = it
+                    CaptureManager.setAnrTraceEnabled(context, it)
+                }
+            )
+            CaptureOptionRow(
+                checked = eventsBufferEnabled,
+                label = stringResource(R.string.opt_events_buffer_label),
+                hint = stringResource(R.string.opt_events_buffer_hint),
+                onCheckedChange = {
+                    eventsBufferEnabled = it
+                    CaptureManager.setEventsBufferEnabled(context, it)
+                }
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Divider()
+        Spacer(Modifier.height(8.dp))
+
         SectionTitle(stringResource(R.string.section_target_app))
 
         OutlinedTextField(
@@ -401,6 +454,25 @@ private fun PermissionRow(label: String, granted: Boolean, onClick: () -> Unit) 
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         if (!granted) {
             TextButton(onClick = onClick) { Text(stringResource(R.string.perm_open_button)) }
+        }
+    }
+}
+
+@Composable
+private fun CaptureOptionRow(
+    checked: Boolean,
+    label: String,
+    hint: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(hint, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

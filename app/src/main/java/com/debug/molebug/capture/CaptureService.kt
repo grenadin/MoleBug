@@ -21,6 +21,7 @@ import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
 import com.debug.molebug.MainActivity
 import com.debug.molebug.R
+import java.io.File
 
 class CaptureService : Service() {
 
@@ -46,8 +47,15 @@ class CaptureService : Service() {
     private var logcatProcess: Process? = null
     private var systemWatcherProcess: Process? = null
     private var lmkWatcherProcess: Process? = null
+    private var eventsWatcherProcess: Process? = null
     private var currentPid = -1
     private val memoryHandler = Handler(Looper.getMainLooper())
+
+    // Capture Options checklist, read once per session when capture starts
+    private var networkTimingEnabled = true
+    private var anrTraceEnabled = true
+    private var eventsBufferEnabled = true
+    private var foregroundSinceMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -79,10 +87,14 @@ class CaptureService : Service() {
     private fun startLogcatCapture() {
         logcatRunning = true
         val pkg = targetPkg ?: return
+        networkTimingEnabled = CaptureManager.isNetworkTimingEnabled(applicationContext)
+        anrTraceEnabled = CaptureManager.isAnrTraceEnabled(applicationContext)
+        eventsBufferEnabled = CaptureManager.isEventsBufferEnabled(applicationContext)
         dumpLogcatBacklog(pkg)
         startSystemBufferWatcher(pkg)
         startLmkWatcher(pkg)
         startMemoryPolling()
+        if (eventsBufferEnabled) startEventsWatcher(pkg)
     }
 
     /** A log line is "bulk listing" noise (e.g. Huawei's loadRunningPackages/appLruQueue
@@ -134,6 +146,7 @@ class CaptureService : Service() {
                         if (line.contains("FATAL EXCEPTION") || line.contains("AndroidRuntime")) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-CRASH] Found a real crash stack trace, see lines above")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                            logTimingIfEnabled()
                         }
                     }
                 } catch (e: Exception) {
@@ -176,6 +189,8 @@ class CaptureService : Service() {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] $line")
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                            logTimingIfEnabled()
+                            if (anrTraceEnabled) logAnrTraceIfAvailable()
                         }
 
                         val newPid = pidPattern.find(line)?.groupValues?.get(1)?.toIntOrNull()
@@ -272,6 +287,73 @@ class CaptureService : Service() {
         }
     }
 
+    /** Logs how long the target app had been in the foreground before this crash/ANR — handy
+     *  for spotting a pattern like "always dies ~10s after opening" (e.g. an SDK call that
+     *  hangs and eventually times out). Falls back to a clear note if no foreground
+     *  transition was ever observed yet for this session. */
+    private fun logTimingIfEnabled() {
+        if (!networkTimingEnabled) return
+        val text = if (foregroundSinceMs != 0L) {
+            "${System.currentTimeMillis() - foregroundSinceMs} ms since app came to foreground"
+        } else {
+            "foreground time unknown (no MOVED_TO_FOREGROUND usage event seen yet this session)"
+        }
+        CaptureManager.appendLog(applicationContext, "[TIMING] $text")
+    }
+
+    /** Android writes a full thread-dump-style stack trace per ANR under /data/anr — far more
+     *  specific than the one-line "ANR in ..." summary, since it shows exactly which thread
+     *  (and what it was doing) was stuck. Whether an app process can read another app's files
+     *  under /data/anr is governed by plain Linux file permissions, not by READ_LOGS/DUMP, so
+     *  this is genuinely untested territory — kept behind its own opt-in toggle and fails
+     *  gracefully with a clear note if the device denies access. */
+    private fun logAnrTraceIfAvailable() {
+        val content = try {
+            val dir = File("/data/anr")
+            val files = dir.listFiles()
+            when {
+                files == null -> "Could not list /data/anr (no permission, or it doesn't exist on this device/ROM)"
+                files.isEmpty() -> "No trace files found in /data/anr"
+                else -> {
+                    val latest = files.filter { it.isFile }.maxByOrNull { it.lastModified() }
+                    val text = latest?.readText().orEmpty()
+                    if (text.length > 8000) text.take(8000) + "\n...(truncated)" else text
+                }
+            }
+        } catch (e: Exception) {
+            "Failed to read ANR trace: ${e.message}"
+        }
+        CaptureManager.appendLog(applicationContext, "[ANR-TRACE] ----- begin /data/anr content -----")
+        content.lineSequence().forEach { CaptureManager.appendLog(applicationContext, "[ANR-TRACE] $it") }
+        CaptureManager.appendLog(applicationContext, "[ANR-TRACE] ----- end -----")
+    }
+
+    /** events buffer carries ActivityManager's structured am_anr/am_crash entries, which are
+     *  sometimes more specific than the freeform text in main/system/crash. Runs as its own
+     *  tail (separate logcat process) rather than merging into the system buffer watcher,
+     *  since logcat's combined output across -b flags doesn't tag which buffer a line came
+     *  from, and we want this whole feature cleanly removable via its own toggle. */
+    private fun startEventsWatcher(pkg: String) {
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "threadtime", "-b", "events"))
+            eventsWatcherProcess = process
+            Thread {
+                try {
+                    process.inputStream.bufferedReader().forEachLine { line ->
+                        if (!logcatRunning) return@forEachLine
+                        if (line.contains(pkg, ignoreCase = true) && !looksLikeBulkListing(line)) {
+                            CaptureManager.appendLog(applicationContext, "[LOGCAT-EVENTS] $line")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // process destroyed/pipe closed — normal on stop
+                }
+            }.apply { isDaemon = true }.start()
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[LOGCAT-EVENTS] Failed to start events buffer watcher: ${e.message}")
+        }
+    }
+
     /** Official OS-reported reason a process exited (crash/ANR/low-memory/signaled/etc.),
      *  straight from ActivityManager — distinguishes "crashed" from "was killed for memory"
      *  from "user swiped it away" far more reliably than guessing from logcat text alone.
@@ -328,8 +410,11 @@ class CaptureService : Service() {
         systemWatcherProcess = null
         lmkWatcherProcess?.destroy()
         lmkWatcherProcess = null
+        eventsWatcherProcess?.destroy()
+        eventsWatcherProcess = null
         memoryHandler.removeCallbacksAndMessages(null)
         currentPid = -1
+        foregroundSinceMs = 0L
     }
 
     private fun buildNotification(): Notification {
@@ -472,6 +557,9 @@ class CaptureService : Service() {
                         if (e.packageName == pkg) {
                             val label = usageEventLabel(e.eventType)
                             CaptureManager.appendLog(applicationContext, "[USAGE] $pkg -> $label")
+                            if (label == "MOVED_TO_FOREGROUND" && networkTimingEnabled) {
+                                foregroundSinceMs = System.currentTimeMillis()
+                            }
                             if (label == "MOVED_TO_BACKGROUND" || label == "ACTIVITY_STOPPED") {
                                 CaptureManager.appendLog(
                                     applicationContext,

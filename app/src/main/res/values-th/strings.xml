@@ -43,6 +43,13 @@
     <string name="dump_permission_hint">ถ้าไม่ทำขั้นนี้ ก็ยังตรวจ crash/ANR จาก logcat ได้เหมือนเดิม แค่ไม่ได้เหตุผลที่ระบบรายงานเองมาด้วย</string>
     <string name="copy_command">คัดลอกคำสั่ง</string>
     <string name="recheck_permissions">รีเช็คสิทธิ์</string>
+    <string name="section_capture_options">ตัวเลือกการจับ Log</string>
+    <string name="opt_network_timing_label">บันทึกเวลา network</string>
+    <string name="opt_network_timing_hint">บันทึกเวลาที่ผ่านไปตั้งแต่แอปขึ้น foreground จนถึง crash/ANR</string>
+    <string name="opt_anr_trace_label">เนื้อหาไฟล์ ANR trace</string>
+    <string name="opt_anr_trace_hint">อ่าน /data/anr เพื่อดู stack trace ของ thread ที่ค้างจริง — อาจอ่านไม่ได้ในทุกเครื่อง</string>
+    <string name="opt_events_buffer_label">Events buffer</string>
+    <string name="opt_events_buffer_hint">จับ events log buffer เพิ่มด้วย อาจมี ANR/WTF event ที่ไม่อยู่ใน main/system/crash</string>
     <string name="section_target_app">แอปเป้าหมาย</string>
     <string name="search_apps_label">ค้นหาแอป</string>
     <string name="search_mode_label">ค้นหาด้วย:</string>

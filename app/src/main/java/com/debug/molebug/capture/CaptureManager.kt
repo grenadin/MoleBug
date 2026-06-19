@@ -19,6 +19,9 @@ object CaptureManager {
     private const val KEY_ARMED = "armed" // true after user taps "start" but before target app is foregrounded
     private const val KEY_LOG_PATH = "log_path"
     private const val KEY_CRASH_COUNT = "crash_count"
+    private const val KEY_OPT_NETWORK_TIMING = "opt_network_timing"
+    private const val KEY_OPT_ANR_TRACE = "opt_anr_trace"
+    private const val KEY_OPT_EVENTS_BUFFER = "opt_events_buffer"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -107,4 +110,21 @@ object CaptureManager {
     fun hasDumpPermission(context: Context): Boolean =
         context.checkSelfPermission(android.Manifest.permission.DUMP) ==
                 PackageManager.PERMISSION_GRANTED
+
+    /** Optional capture features, toggled from the Capture Options checklist on the target
+     *  picker screen and persisted across sessions. All default to enabled. */
+    fun isNetworkTimingEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_OPT_NETWORK_TIMING, true)
+    fun setNetworkTimingEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_OPT_NETWORK_TIMING, enabled).apply()
+
+    fun isAnrTraceEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_OPT_ANR_TRACE, true)
+    fun setAnrTraceEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_OPT_ANR_TRACE, enabled).apply()
+
+    fun isEventsBufferEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_OPT_EVENTS_BUFFER, true)
+    fun setEventsBufferEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_OPT_EVENTS_BUFFER, enabled).apply()
 }

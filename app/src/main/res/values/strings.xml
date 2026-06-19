@@ -43,6 +43,13 @@
     <string name="dump_permission_hint">If you skip this step, you still get logcat-based crash/ANR detection, just not the official OS-reported exit reason</string>
     <string name="copy_command">Copy Command</string>
     <string name="recheck_permissions">Recheck Permissions</string>
+    <string name="section_capture_options">Capture Options</string>
+    <string name="opt_network_timing_label">Network timing log</string>
+    <string name="opt_network_timing_hint">Logs elapsed time from foreground to crash/ANR</string>
+    <string name="opt_anr_trace_label">ANR trace file content</string>
+    <string name="opt_anr_trace_hint">Reads /data/anr for the exact stuck thread\'s stack trace — may not be readable on all devices</string>
+    <string name="opt_events_buffer_label">Events buffer</string>
+    <string name="opt_events_buffer_hint">Also captures the events log buffer, which sometimes has ANR/WTF entries not in main/system/crash</string>
     <string name="section_target_app">Target App</string>
     <string name="search_apps_label">Search apps</string>
     <string name="search_mode_label">Search by:</string>
