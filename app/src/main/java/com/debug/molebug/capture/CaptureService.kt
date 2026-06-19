@@ -42,10 +42,9 @@ class CaptureService : Service() {
     private var targetPkg: String? = null
     private var lastEventTime = System.currentTimeMillis()
 
-    private var logcatThread: Thread? = null
     @Volatile private var logcatRunning = false
     private var logcatProcess: Process? = null
-    private var anrWatcherProcess: Process? = null
+    private var systemWatcherProcess: Process? = null
     private var lmkWatcherProcess: Process? = null
     private var currentPid = -1
     private val memoryHandler = Handler(Looper.getMainLooper())
@@ -77,48 +76,27 @@ class CaptureService : Service() {
         return START_STICKY
     }
 
-    /** Continuously finds the target package's current PID, attaches `logcat --pid=PID`,
-     *  and streams real log lines (including stack traces) into the capture file. If the
-     *  target crashes and Android restarts its process with a new PID, this loop detects
-     *  the PID change and re-attaches automatically — so crash loops are followed seamlessly. */
     private fun startLogcatCapture() {
         logcatRunning = true
         val pkg = targetPkg ?: return
         dumpLogcatBacklog(pkg)
-        startAnrWatcher(pkg)
+        startSystemBufferWatcher(pkg)
         startLmkWatcher(pkg)
         startMemoryPolling()
-        logcatThread = Thread {
-            var lastPid = -1
-            while (logcatRunning) {
-                val pid = findPid(pkg)
-                if (pid != lastPid) {
-                    // pid changed (new launch, crash-restart, or process died with nothing
-                    // new yet) -> look up the official exit reason for whatever pid just left
-                    if (lastPid != -1) checkExitReason(pkg, lastPid)
-                    if (pid != null) {
-                        logcatProcess?.destroy()
-                        CaptureManager.appendLog(applicationContext, "[LOGCAT] attach pid=$pid ($pkg)")
-                        attachLogcatForPid(pid)
-                    } else {
-                        CaptureManager.appendLog(applicationContext, "[LOGCAT] pid $lastPid disappeared (process died/restarted) — waiting for new pid")
-                        logcatProcess?.destroy()
-                        logcatProcess = null
-                    }
-                    currentPid = pid ?: -1
-                    lastPid = currentPid
-                }
-                Thread.sleep(500)
-            }
-            logcatProcess?.destroy()
-        }
-        logcatThread?.isDaemon = true
-        logcatThread?.start()
     }
 
+    /** A log line is "bulk listing" noise (e.g. Huawei's loadRunningPackages/appLruQueue
+     *  dumps) rather than something actually about the target app if it mentions five or
+     *  more distinct dotted package-like identifiers — a real crash/event line about one
+     *  app essentially never does. Filters this out wherever we match by package-name
+     *  substring across unfiltered buffers, instead of pid-filtered ones. */
+    private val packageLikeTokenRegex = Regex("[a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*){2,}")
+    private fun looksLikeBulkListing(line: String): Boolean = packageLikeTokenRegex.findAll(line).count() >= 5
+
     /** One-shot dump of whatever is already sitting in the log buffers (main/system/crash)
-     *  before we ever attach to a pid, filtered down to lines mentioning the target package.
-     *  Covers crashes that happen so fast the pid-watch loop never catches a live pid for them. */
+     *  before we ever attach to a pid, filtered down to lines mentioning the target package
+     *  (and not bulk package-listing noise). Covers crashes that happen so fast the pid
+     *  watcher below never catches a live pid for them. */
     private fun dumpLogcatBacklog(pkg: String) {
         try {
             val process = Runtime.getRuntime().exec(
@@ -126,24 +104,13 @@ class CaptureService : Service() {
             )
             val lines = process.inputStream.bufferedReader().readLines()
             process.waitFor()
-            val relevant = lines.filter { it.contains(pkg, ignoreCase = true) }
+            val relevant = lines.filter { it.contains(pkg, ignoreCase = true) && !looksLikeBulkListing(it) }
             if (relevant.isNotEmpty()) {
                 CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] ${relevant.size} buffered line(s) already mentioning $pkg before capture started:")
                 relevant.forEach { CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] $it") }
             }
         } catch (e: Exception) {
             CaptureManager.appendLog(applicationContext, "[LOGCAT-HISTORY] Failed to dump backlog: ${e.message}")
-        }
-    }
-
-    private fun findPid(pkg: String): Int? {
-        return try {
-            val p = Runtime.getRuntime().exec(arrayOf("sh", "-c", "pidof $pkg"))
-            val out = p.inputStream.bufferedReader().readLine()
-            p.waitFor()
-            out?.trim()?.split(" ")?.firstOrNull()?.toIntOrNull()
-        } catch (e: Exception) {
-            null
         }
     }
 
@@ -178,24 +145,50 @@ class CaptureService : Service() {
         }
     }
 
-    /** ANR entries are logged by system_server (ActivityManager), under system_server's own
-     *  pid — never the target app's pid — so `--pid` filtering on the target's pid can never
-     *  catch them. Instead tail the unfiltered `system` buffer for the whole capture session
-     *  and match by package name + ANR keywords in the text itself. */
-    private fun startAnrWatcher(pkg: String) {
+    /** Matches ActivityManager's `ProcessRecord{<hash> <pid>:<package>/<uid>}` text, which the
+     *  system buffer logs repeatedly on every app launch/foreground/process-death event. Lets
+     *  us discover the target's live pid purely by reading log text we already have permission
+     *  to read — no `pidof`/`ps`/`sh` process needs to be spawned at all. */
+    private fun pidPatternFor(pkg: String) = Regex("(\\d+):${Regex.escape(pkg)}(?:/|\\})")
+
+    /** Single tail of the unfiltered `system` buffer for the whole capture session, doing two
+     *  jobs at once:
+     *  1. ANR entries are logged by system_server (ActivityManager) under system_server's own
+     *     pid, never the target app's — `--pid` filtering on the target's pid could never
+     *     catch them, so this matches by package name + ANR keywords in the text itself.
+     *  2. Discovers the target's current pid from ProcessRecord-style mentions and (re)attaches
+     *     `logcat --pid=X` whenever it changes — replacing the old `pidof`/`ps`-based polling
+     *     loop, which silently failed forever: apps run in the SELinux `untrusted_app` domain
+     *     and can't exec `sh`/`pidof`/`ps` the way `adb shell` (in the `shell` domain) can. */
+    private fun startSystemBufferWatcher(pkg: String) {
+        val pidPattern = pidPatternFor(pkg)
         try {
             val process = Runtime.getRuntime().exec(
                 arrayOf("logcat", "-v", "threadtime", "-b", "system")
             )
-            anrWatcherProcess = process
+            systemWatcherProcess = process
             Thread {
                 try {
                     process.inputStream.bufferedReader().forEachLine { line ->
                         if (!logcatRunning) return@forEachLine
+
                         if (line.contains(pkg, ignoreCase = true) && anrKeywords.any { line.contains(it) }) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] $line")
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                        }
+
+                        val newPid = pidPattern.find(line)?.groupValues?.get(1)?.toIntOrNull()
+                        if (newPid != null && newPid != currentPid) {
+                            val previousPid = currentPid
+                            if (previousPid != -1) {
+                                CaptureManager.appendLog(applicationContext, "[LOGCAT] pid $previousPid replaced by pid $newPid (new launch or crash-restart)")
+                                checkExitReason(pkg, previousPid)
+                            }
+                            currentPid = newPid
+                            logcatProcess?.destroy()
+                            CaptureManager.appendLog(applicationContext, "[LOGCAT] attach pid=$newPid ($pkg)")
+                            attachLogcatForPid(newPid)
                         }
                     }
                 } catch (e: Exception) {
@@ -203,7 +196,7 @@ class CaptureService : Service() {
                 }
             }.apply { isDaemon = true }.start()
         } catch (e: Exception) {
-            CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Failed to start ANR watcher: ${e.message}")
+            CaptureManager.appendLog(applicationContext, "[LOGCAT] Failed to start system buffer watcher: ${e.message}")
         }
     }
 
@@ -331,8 +324,8 @@ class CaptureService : Service() {
         logcatRunning = false
         logcatProcess?.destroy()
         logcatProcess = null
-        anrWatcherProcess?.destroy()
-        anrWatcherProcess = null
+        systemWatcherProcess?.destroy()
+        systemWatcherProcess = null
         lmkWatcherProcess?.destroy()
         lmkWatcherProcess = null
         memoryHandler.removeCallbacksAndMessages(null)
