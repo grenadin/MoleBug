@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -19,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -497,6 +499,24 @@ fun LogViewerScreen(onBack: () -> Unit) {
         }
     }
 
+    val logLines = remember(logText) { logText.lines() }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    var logSearchQuery by remember { mutableStateOf("") }
+    var currentMatchPointer by remember { mutableStateOf(0) }
+    val matchIndices = remember(logLines, logSearchQuery) {
+        if (logSearchQuery.isBlank()) emptyList()
+        else logLines.indices.filter { logLines[it].contains(logSearchQuery, ignoreCase = true) }
+    }
+
+    fun jumpToMatch(pointer: Int) {
+        if (matchIndices.isEmpty()) return
+        val clamped = ((pointer % matchIndices.size) + matchIndices.size) % matchIndices.size
+        currentMatchPointer = clamped
+        coroutineScope.launch { listState.scrollToItem(matchIndices[clamped]) }
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text(stringResource(R.string.back_button)) }
@@ -528,17 +548,78 @@ fun LogViewerScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
 
-        Card(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            SelectionContainer {
+        OutlinedTextField(
+            value = logSearchQuery,
+            onValueChange = {
+                logSearchQuery = it
+                currentMatchPointer = 0
+                jumpToMatch(0)
+            },
+            label = { Text(stringResource(R.string.log_search_label)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (logSearchQuery.isNotBlank()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    logText.ifBlank { stringResource(R.string.log_empty) },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(12.dp),
+                    if (matchIndices.isEmpty()) stringResource(R.string.log_search_no_matches)
+                    else stringResource(R.string.log_search_match_count, currentMatchPointer + 1, matchIndices.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { jumpToMatch(currentMatchPointer - 1) }, enabled = matchIndices.isNotEmpty()) {
+                    Text(stringResource(R.string.log_search_previous))
+                }
+                TextButton(onClick = { jumpToMatch(currentMatchPointer + 1) }, enabled = matchIndices.isNotEmpty()) {
+                    Text(stringResource(R.string.log_search_next))
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+
+        Card(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (logLines.size <= 1 && logText.isBlank()) {
+                Text(
+                    stringResource(R.string.log_empty),
+                    modifier = Modifier.fillMaxSize().padding(12.dp),
                     style = MaterialTheme.typography.bodySmall
                 )
+            } else {
+                SelectionContainer {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+                        itemsIndexed(logLines) { index, line ->
+                            val isCurrentMatch = matchIndices.isNotEmpty() && matchIndices[currentMatchPointer] == index
+                            val isOtherMatch = !isCurrentMatch && logSearchQuery.isNotBlank() &&
+                                    line.contains(logSearchQuery, ignoreCase = true)
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isCurrentMatch) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        when {
+                                            isCurrentMatch -> MaterialTheme.colorScheme.primaryContainer
+                                            isOtherMatch -> MaterialTheme.colorScheme.secondaryContainer
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .padding(vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
             }
+        }
+
+        if (logLines.isNotEmpty()) {
+            val firstVisible = listState.firstVisibleItemIndex
+            val percent = if (logLines.size > 1) (firstVisible * 100 / (logLines.size - 1)).coerceIn(0, 100) else 100
+            Text(
+                stringResource(R.string.log_scroll_position, firstVisible + 1, logLines.size, percent),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+            )
         }
 
         Spacer(Modifier.height(8.dp))

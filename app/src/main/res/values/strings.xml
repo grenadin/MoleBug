@@ -66,6 +66,12 @@
     <string name="status_idle">⚪ Not capturing (total %1$d crash(es))</string>
     <string name="button_stop_capture">⏹ Stop Capturing Log Now</string>
     <string name="log_empty">(no log yet)</string>
+    <string name="log_search_label">Search log</string>
+    <string name="log_search_no_matches">No matches</string>
+    <string name="log_search_match_count">Match %1$d of %2$d</string>
+    <string name="log_search_previous">↑ Prev</string>
+    <string name="log_search_next">↓ Next</string>
+    <string name="log_scroll_position">Line %1$d of %2$d (%3$d%%)</string>
     <string name="button_saved_automatically">Saved Automatically</string>
     <string name="button_share_file">Share File</string>
     <string name="share_chooser_title">Share log file</string>

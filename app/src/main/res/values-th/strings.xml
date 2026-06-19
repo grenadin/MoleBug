@@ -66,6 +66,12 @@
     <string name="status_idle">⚪ ไม่ได้จับ log อยู่ (รวมพังทั้งหมด %1$d รอบ)</string>
     <string name="button_stop_capture">⏹ หยุดจับ Log เดี๋ยวนี้</string>
     <string name="log_empty">(ยังไม่มี log)</string>
+    <string name="log_search_label">ค้นหาใน log</string>
+    <string name="log_search_no_matches">ไม่พบ</string>
+    <string name="log_search_match_count">ผลที่ %1$d จาก %2$d</string>
+    <string name="log_search_previous">↑ ก่อนหน้า</string>
+    <string name="log_search_next">↓ ถัดไป</string>
+    <string name="log_scroll_position">บรรทัด %1$d จาก %2$d (%3$d%%)</string>
     <string name="button_saved_automatically">บันทึกแล้วอัตโนมัติ</string>
     <string name="button_share_file">ส่งไฟล์ (แชร์)</string>
     <string name="share_chooser_title">ส่งไฟล์ log</string>
