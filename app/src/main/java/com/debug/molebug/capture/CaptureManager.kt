@@ -3,6 +3,7 @@ package com.debug.molebug.capture
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import com.debug.molebug.DeviceInspector
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -34,7 +35,21 @@ object CaptureManager {
             .putBoolean(KEY_CAPTURING, false)
             .putInt(KEY_CRASH_COUNT, 0)
             .apply()
-        file.writeText("===== MoleBug Capture Log =====\nTarget package: $targetPackage\nArmed at: $ts\n\n")
+        val deviceInfo = DeviceInspector.getDeviceInfo(context)
+        val header = buildString {
+            appendLine("===== MoleBug Capture Log =====")
+            appendLine("Target package: $targetPackage")
+            appendLine("Armed at: $ts")
+            appendLine()
+            appendLine("---- Device Info ----")
+            appendLine("Device name: ${deviceInfo.deviceName}")
+            appendLine("Model: ${deviceInfo.model}")
+            appendLine("Build number: ${deviceInfo.buildNumber}")
+            appendLine("Software version: ${deviceInfo.softwareVersion}")
+            appendLine("EMUI version: ${deviceInfo.emuiVersion}")
+            appendLine()
+        }
+        file.writeText(header)
     }
 
     fun isArmed(context: Context) = prefs(context).getBoolean(KEY_ARMED, false)
