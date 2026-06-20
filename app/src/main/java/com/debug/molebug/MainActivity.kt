@@ -40,7 +40,11 @@ data class DeviceInfo(
     val model: String,
     val buildNumber: String,
     val softwareVersion: String,
-    val emuiVersion: String
+    val emuiVersion: String,
+    val cpuAbi: String,
+    val cpuCores: Int,
+    val cpuMaxFreqMHz: String,
+    val gpuRenderer: String
 )
 
 /** -------- Helpers -------- */
@@ -54,8 +58,77 @@ object DeviceInspector {
             softwareVersion = "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
             emuiVersion = getProp("ro.build.version.emui").ifEmpty {
                 getProp("ro.build.hw_emui_api_level").ifEmpty { context.getString(R.string.emui_not_found) }
-            }
+            },
+            cpuAbi = Build.SUPPORTED_ABIS.joinToString(", "),
+            cpuCores = Runtime.getRuntime().availableProcessors(),
+            cpuMaxFreqMHz = readCpuMaxFreqMHz(),
+            gpuRenderer = readGpuRenderer()
         )
+    }
+
+    /** Highest of each core's cpuinfo_max_freq under sysfs — plain file reads, no special
+     *  permission needed, readable on stock ROMs without root. */
+    private fun readCpuMaxFreqMHz(): String {
+        return try {
+            val freqsKHz = (0 until Runtime.getRuntime().availableProcessors()).mapNotNull { core ->
+                File("/sys/devices/system/cpu/cpu$core/cpufreq/cpuinfo_max_freq")
+                    .takeIf { it.exists() }
+                    ?.readText()?.trim()?.toLongOrNull()
+            }
+            val maxKHz = freqsKHz.maxOrNull()
+            if (maxKHz != null) "${maxKHz / 1000} MHz" else "unavailable (not readable on this device)"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Queries GL_RENDERER from a throwaway off-screen EGL context — the only way to get the
+     *  actual GPU model string (e.g. "Adreno (TM) 619") on Android; there's no Build.* field
+     *  for it. Context is created and torn down immediately, never touches the UI. */
+    private fun readGpuRenderer(): String {
+        return try {
+            val egl = javax.microedition.khronos.egl.EGLContext.getEGL() as javax.microedition.khronos.egl.EGL10
+            val display = egl.eglGetDisplay(javax.microedition.khronos.egl.EGL10.EGL_DEFAULT_DISPLAY)
+            val version = IntArray(2)
+            egl.eglInitialize(display, version)
+
+            val configAttribs = intArrayOf(
+                javax.microedition.khronos.egl.EGL10.EGL_RENDERABLE_TYPE, 4, // EGL_OPENGL_ES2_BIT
+                javax.microedition.khronos.egl.EGL10.EGL_NONE
+            )
+            val configs = arrayOfNulls<javax.microedition.khronos.egl.EGLConfig>(1)
+            val numConfigs = IntArray(1)
+            egl.eglChooseConfig(display, configAttribs, configs, 1, numConfigs)
+            val config = configs[0] ?: return "unavailable (no matching EGL config)"
+
+            val contextAttribs = intArrayOf(0x3098, 2, javax.microedition.khronos.egl.EGL10.EGL_NONE) // EGL_CONTEXT_CLIENT_VERSION=2
+            val eglContext = egl.eglCreateContext(
+                display, config, javax.microedition.khronos.egl.EGL10.EGL_NO_CONTEXT, contextAttribs
+            )
+            val surfaceAttribs = intArrayOf(
+                javax.microedition.khronos.egl.EGL10.EGL_WIDTH, 1,
+                javax.microedition.khronos.egl.EGL10.EGL_HEIGHT, 1,
+                javax.microedition.khronos.egl.EGL10.EGL_NONE
+            )
+            val surface = egl.eglCreatePbufferSurface(display, config, surfaceAttribs)
+            egl.eglMakeCurrent(display, surface, surface, eglContext)
+
+            val renderer = android.opengl.GLES20.glGetString(android.opengl.GLES20.GL_RENDERER) ?: "unknown"
+
+            egl.eglMakeCurrent(
+                display,
+                javax.microedition.khronos.egl.EGL10.EGL_NO_SURFACE,
+                javax.microedition.khronos.egl.EGL10.EGL_NO_SURFACE,
+                javax.microedition.khronos.egl.EGL10.EGL_NO_CONTEXT
+            )
+            egl.eglDestroySurface(display, surface)
+            egl.eglDestroyContext(display, eglContext)
+            egl.eglTerminate(display)
+
+            renderer
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
     }
 
     /** Reads a system property via reflection on android.os.SystemProperties (no root needed for readable props) */
@@ -135,6 +208,10 @@ object DeviceInspector {
         sb.appendLine("Build number: ${deviceInfo.buildNumber}")
         sb.appendLine("Software version: ${deviceInfo.softwareVersion}")
         sb.appendLine("EMUI version: ${deviceInfo.emuiVersion}")
+        sb.appendLine("CPU ABI: ${deviceInfo.cpuAbi}")
+        sb.appendLine("CPU cores: ${deviceInfo.cpuCores}")
+        sb.appendLine("CPU max frequency: ${deviceInfo.cpuMaxFreqMHz}")
+        sb.appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
         sb.appendLine()
         sb.appendLine("---- Required Components ----")
         checks.forEach {
@@ -233,6 +310,10 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 InfoRow(stringResource(R.string.info_build_number), deviceInfo.buildNumber)
                 InfoRow(stringResource(R.string.info_software_version), deviceInfo.softwareVersion)
                 InfoRow(stringResource(R.string.info_emui_version), deviceInfo.emuiVersion)
+                InfoRow(stringResource(R.string.info_cpu_abi), deviceInfo.cpuAbi)
+                InfoRow(stringResource(R.string.info_cpu_cores), deviceInfo.cpuCores.toString())
+                InfoRow(stringResource(R.string.info_cpu_freq), deviceInfo.cpuMaxFreqMHz)
+                InfoRow(stringResource(R.string.info_gpu_renderer), deviceInfo.gpuRenderer)
 
                 Spacer(Modifier.height(16.dp))
                 SectionTitle(stringResource(R.string.section_check_components))

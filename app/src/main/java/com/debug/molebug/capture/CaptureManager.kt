@@ -7,6 +7,8 @@ import com.debug.molebug.DeviceInspector
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * Holds the state of an event-capture session and writes log lines to disk
@@ -51,6 +53,10 @@ object CaptureManager {
             appendLine("Build number: ${deviceInfo.buildNumber}")
             appendLine("Software version: ${deviceInfo.softwareVersion}")
             appendLine("EMUI version: ${deviceInfo.emuiVersion}")
+            appendLine("CPU ABI: ${deviceInfo.cpuAbi}")
+            appendLine("CPU cores: ${deviceInfo.cpuCores}")
+            appendLine("CPU max frequency: ${deviceInfo.cpuMaxFreqMHz}")
+            appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
             appendLine()
         }
         file.writeText(header)
@@ -97,6 +103,26 @@ object CaptureManager {
         val path = logPath(context) ?: return ""
         val f = File(path)
         return if (f.exists()) f.readText() else ""
+    }
+
+    /** Zips the current capture log .txt (already includes device info in its header) into a
+     *  same-named .zip alongside it, so a large session log (can run into the MBs) compresses
+     *  down for easier sharing. Overwrites any previous zip for this session on each call. */
+    fun zipLogFile(context: Context): File? {
+        val path = logPath(context) ?: return null
+        val source = File(path)
+        if (!source.exists()) return null
+        val zipFile = File(source.parentFile, source.nameWithoutExtension + ".zip")
+        return try {
+            ZipOutputStream(zipFile.outputStream()).use { zos ->
+                zos.putNextEntry(ZipEntry(source.name))
+                source.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+            zipFile
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /** True only if `adb shell pm grant <pkg> android.permission.READ_LOGS` was run once.

@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -157,6 +158,7 @@ class CaptureService : Service() {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-CRASH] Found a real crash stack trace, see lines above")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
                             logNetworkSocketSnapshotIfPossible()
+                            logPowerStateSnapshot()
                             logTimingIfEnabled()
                         }
                     }
@@ -201,6 +203,7 @@ class CaptureService : Service() {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
                             logNetworkSocketSnapshotIfPossible()
+                            logPowerStateSnapshot()
                             logTimingIfEnabled()
                             if (anrTraceEnabled) logAnrTraceIfAvailable()
                         }
@@ -336,6 +339,24 @@ class CaptureService : Service() {
         CaptureManager.appendLog(applicationContext, "[NETWORK-SOCKET] ${networkSocketSnapshot(pkg)}")
     }
 
+    /** Doze (device idle) and battery saver both throttle background network/jobs for apps not
+     *  in the foreground, and battery saver can restrict even foreground apps on some OEM
+     *  ROMs. Public PowerManager APIs, no permission needed. Useful for telling "this hang is
+     *  the system throttling the app" apart from "the app's own bug". */
+    private fun powerStateSnapshot(): String {
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val idle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) pm.isDeviceIdleMode else false
+            "deviceIdleMode=$idle powerSaveMode=${pm.isPowerSaveMode}"
+        } catch (e: Exception) {
+            "failed to read: ${e.message}"
+        }
+    }
+
+    private fun logPowerStateSnapshot() {
+        CaptureManager.appendLog(applicationContext, "[POWER] ${powerStateSnapshot()}")
+    }
+
     /** Catches the case a real device test turned up: an app silently stuck (e.g. a coroutine
      *  awaiting something that never completes) with 0% CPU, no exception, no ANR, and no
      *  pending network socket - nothing else in this service would ever flag it, since there's
@@ -361,6 +382,7 @@ class CaptureService : Service() {
                         CaptureManager.appendLog(applicationContext, "[MEMORY] pid=$currentPid ${memorySnapshot(currentPid)}")
                         CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
                         logNetworkSocketSnapshotIfPossible()
+                        logPowerStateSnapshot()
                     }
                 }
                 stallHandler.postDelayed(this, 5000)

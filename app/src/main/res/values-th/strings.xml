@@ -10,6 +10,10 @@
     <string name="info_build_number">3. หมายเลขรุ่น (Build)</string>
     <string name="info_software_version">4. เวอร์ชันซอฟต์แวร์</string>
     <string name="info_emui_version">5. เวอร์ชัน EMUI</string>
+    <string name="info_cpu_abi">6. CPU ABI</string>
+    <string name="info_cpu_cores">7. จำนวน CPU core</string>
+    <string name="info_cpu_freq">8. ความเร็ว CPU สูงสุด</string>
+    <string name="info_gpu_renderer">9. GPU Renderer</string>
     <string name="section_check_components">ตรวจสอบแอปพื้นฐาน</string>
     <string name="button_export_log">ดึงรายการแอปที่ติดตั้ง + บันทึก Log</string>
     <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
@@ -35,6 +39,8 @@
     <string name="perm_overlay">Overlay (แสดงป้ายแดงกระพริบ)</string>
     <string name="perm_usage_access">Usage Access (ดูจังหวะ foreground/background)</string>
     <string name="perm_accessibility">Accessibility Service (ตรวจจับ dialog หยุดทำงาน)</string>
+    <string name="perm_battery_opt">ยกเว้น Battery Optimization (แนะนำ)</string>
+    <string name="perm_battery_opt_huawei_hint">บนเครื่อง Huawei/EMUI การยกเว้น battery optimization แบบมาตรฐานอาจไม่พอ — ให้เข้า Settings → Battery → การเปิดแอป / Protected Apps แล้วตั้งให้ MoleBug เปิดแบบ manual ด้วย ไม่งั้น service จับ log อาจถูกระบบฆ่ากลางทาง</string>
     <string name="perm_open_button">เปิดสิทธิ์</string>
     <string name="read_logs_label">READ_LOGS (ได้ stack trace จริงแบบ adb logcat — ไม่บังคับ)</string>
     <string name="read_logs_hint">ถ้าไม่ทำขั้นนี้ จะจับได้แค่ event (foreground/background/dialog) เหมือนเดิม</string>

@@ -10,6 +10,10 @@
     <string name="info_build_number">3. Build number</string>
     <string name="info_software_version">4. Software version</string>
     <string name="info_emui_version">5. EMUI version</string>
+    <string name="info_cpu_abi">6. CPU ABI</string>
+    <string name="info_cpu_cores">7. CPU cores</string>
+    <string name="info_cpu_freq">8. CPU max frequency</string>
+    <string name="info_gpu_renderer">9. GPU renderer</string>
     <string name="section_check_components">Check Basic Apps</string>
     <string name="button_export_log">Get Installed App List + Save Log</string>
     <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
@@ -35,6 +39,8 @@
     <string name="perm_overlay">Overlay (show blinking red badge)</string>
     <string name="perm_usage_access">Usage Access (see foreground/background timing)</string>
     <string name="perm_accessibility">Accessibility Service (detect crash dialog)</string>
+    <string name="perm_battery_opt">Battery Optimization Exemption (recommended)</string>
+    <string name="perm_battery_opt_huawei_hint">On Huawei/EMUI, standard battery optimization exemption may not be enough — also check Settings → Battery → App launch / Protected Apps and make sure MoleBug is set to launch manually, or this capture service may get killed mid-session.</string>
     <string name="perm_open_button">Open Permission</string>
     <string name="read_logs_label">READ_LOGS (get real stack traces like adb logcat — optional)</string>
     <string name="read_logs_hint">If you skip this step, capture will only get events (foreground/background/dialog) like before</string>

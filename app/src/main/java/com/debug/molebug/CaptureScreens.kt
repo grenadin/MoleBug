@@ -83,6 +83,15 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
 }
 
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    return try {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        pm.isIgnoringBatteryOptimizations(context.packageName)
+    } catch (e: Exception) {
+        false
+    }
+}
+
 private fun formatFileSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
     bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
@@ -99,6 +108,7 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
     var overlayOk by remember { mutableStateOf(hasOverlayPermission(context)) }
     var usageOk by remember { mutableStateOf(hasUsageAccess(context)) }
     var a11yOk by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
+    var batteryOptOk by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
 
     var searchQuery by remember { mutableStateOf("") }
     var searchByPackage by remember { mutableStateOf(false) }
@@ -143,6 +153,7 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 overlayOk = hasOverlayPermission(context)
                 usageOk = hasUsageAccess(context)
                 a11yOk = isAccessibilityServiceEnabled(context)
+                batteryOptOk = isIgnoringBatteryOptimizations(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -188,6 +199,24 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 label = stringResource(R.string.perm_accessibility), granted = a11yOk,
                 onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             )
+            PermissionRow(
+                label = stringResource(R.string.perm_battery_opt), granted = batteryOptOk,
+                onClick = {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                }
+            )
+            if (!batteryOptOk) {
+                Text(
+                    stringResource(R.string.perm_battery_opt_huawei_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                )
+            }
 
             val readLogsOk = remember { CaptureManager.hasReadLogsPermission(context) }
             val dumpOk = remember { CaptureManager.hasDumpPermission(context) }
@@ -213,6 +242,7 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                     overlayOk = hasOverlayPermission(context)
                     usageOk = hasUsageAccess(context)
                     a11yOk = isAccessibilityServiceEnabled(context)
+                    batteryOptOk = isIgnoringBatteryOptimizations(context)
                 },
                 modifier = Modifier.padding(top = 8.dp)
             ) { Text(stringResource(R.string.recheck_permissions)) }
@@ -672,14 +702,12 @@ fun LogViewerScreen(onBack: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Button(
                 onClick = {
-                    val path = CaptureManager.logPath(context) ?: return@Button
-                    val file = File(path)
-                    if (!file.exists()) return@Button
+                    val zipFile = CaptureManager.zipLogFile(context) ?: return@Button
                     val uri = FileProvider.getUriForFile(
-                        context, "${context.packageName}.fileprovider", file
+                        context, "${context.packageName}.fileprovider", zipFile
                     )
                     val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
+                        type = "application/zip"
                         putExtra(Intent.EXTRA_STREAM, uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
