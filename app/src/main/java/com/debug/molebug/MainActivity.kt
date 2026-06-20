@@ -277,6 +277,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     val allInstalled = checks.all { it.installed }
     var statusMsg by remember { mutableStateOf<String?>(null) }
     var exportedPath by remember { mutableStateOf<String?>(null) }
+    var exportedContent by remember { mutableStateOf<String?>(null) }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -328,6 +329,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         val allApps = DeviceInspector.listInstalledApps(context)
                         val file = DeviceInspector.exportLog(context, deviceInfo, checks, allApps)
                         exportedPath = file.absolutePath
+                        exportedContent = file.readText()
                         statusMsg = context.getString(R.string.status_log_saved, file.name)
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.button_export_log))
@@ -350,6 +352,39 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                }
+                exportedContent?.let { content ->
+                    Spacer(Modifier.height(8.dp))
+                    Card(modifier = Modifier.fillMaxWidth().height(240.dp)) {
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(
+                                content,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val path = exportedPath ?: return@Button
+                            val file = File(path)
+                            if (!file.exists()) return@Button
+                            val uri = androidx.core.content.FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", file
+                            )
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_chooser_title)))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(stringResource(R.string.button_share_file)) }
                 }
 
                 Spacer(Modifier.height(24.dp))
