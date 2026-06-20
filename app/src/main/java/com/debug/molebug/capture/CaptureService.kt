@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.debug.molebug.MainActivity
 import com.debug.molebug.R
@@ -453,20 +454,41 @@ class CaptureService : Service() {
         else
             @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
 
-    /** Solid red circle (recording dot, like a video-record indicator) that blinks while
-     *  capturing. Non-touchable so it never blocks interaction with the app underneath. */
+    /** Red dot + "Record" text, both blinking together as one unit (blinking just toggles
+     *  this whole pill's visibility). Non-touchable so it never blocks interaction with the
+     *  app underneath. Dark translucent pill background keeps the red visible over any
+     *  app content behind it. */
     private fun showOverlay() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-        val dotSize = dp(24)
+        val dotSize = dp(14)
         val dot = View(this).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(Color.parseColor("#E53935"))
             }
         }
-        val dotParams = WindowManager.LayoutParams(
-            dotSize, dotSize,
+        val recordText = TextView(this).apply {
+            text = "Record"
+            setTextColor(Color.parseColor("#E53935"))
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        val recordRow = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#CC222222"))
+                cornerRadius = dp(4).toFloat()
+            }
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            addView(dot, android.widget.LinearLayout.LayoutParams(dotSize, dotSize).apply { marginEnd = dp(6) })
+            addView(recordText)
+        }
+
+        val rowParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             overlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
@@ -476,44 +498,36 @@ class CaptureService : Service() {
             x = 24
             y = 60
         }
-        overlayView = dot
-        windowManager?.addView(dot, dotParams)
+        overlayView = recordRow
+        windowManager?.addView(recordRow, rowParams)
 
-        showStopButton(belowY = dotParams.y + dotSize + dp(8))
+        // Wait for the pill to be measured so the stop button can be placed right beside it
+        // instead of guessing a fixed width for the "Record" text.
+        recordRow.post {
+            showStopButton(x = rowParams.x + recordRow.width + dp(8), y = rowParams.y)
+        }
     }
 
-    /** Red floating "pause" button next to the record dot, so the user can stop capturing
-     *  on demand at any point — not just after a crash — e.g. when they just wanted to
-     *  capture a normal session with nothing wrong. */
-    private fun showStopButton(belowY: Int) {
+    /** Plain white square stop button (a classic media "stop" square inside it) placed beside
+     *  the Record pill, so the user can stop capturing on demand at any point — not just
+     *  after a crash — e.g. when they just wanted to capture a normal session with nothing
+     *  wrong. */
+    private fun showStopButton(x: Int, y: Int) {
         val buttonSize = dp(40)
-        val barWidth = dp(5)
-        val barHeight = dp(16)
-        val barGap = dp(6)
 
         val button = FrameLayout(this).apply {
             background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#E53935"))
+                shape = GradientDrawable.RECTANGLE
+                setColor(Color.WHITE)
+                setStroke(dp(1), Color.parseColor("#888888"))
             }
             isClickable = true
             setOnClickListener { stopCaptureInternal("User tapped the stop button on the floating overlay") }
         }
-        val barRow = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        repeat(2) { index ->
-            val bar = View(this).apply { setBackgroundColor(Color.WHITE) }
-            val barLp = android.widget.LinearLayout.LayoutParams(barWidth, barHeight)
-            if (index == 0) barLp.marginEnd = barGap
-            barRow.addView(bar, barLp)
-        }
+        val stopIcon = View(this).apply { setBackgroundColor(Color.parseColor("#444444")) }
         button.addView(
-            barRow,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER
-            }
+            stopIcon,
+            FrameLayout.LayoutParams(dp(16), dp(16)).apply { gravity = Gravity.CENTER }
         )
 
         val params = WindowManager.LayoutParams(
@@ -523,8 +537,8 @@ class CaptureService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 24
-            y = belowY
+            this.x = x
+            this.y = y
         }
         stopButtonView = button
         windowManager?.addView(button, params)
