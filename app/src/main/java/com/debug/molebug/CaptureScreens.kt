@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -30,6 +32,7 @@ import androidx.core.graphics.drawable.toBitmap
 import com.debug.molebug.capture.CaptureManager
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.roundToInt
 
 enum class Screen { HOME, TARGET_PICKER, LOG_VIEWER }
 
@@ -585,29 +588,40 @@ fun LogViewerScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall
                 )
             } else {
-                SelectionContainer {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-                        itemsIndexed(logLines) { index, line ->
-                            val isCurrentMatch = matchIndices.isNotEmpty() && matchIndices[currentMatchPointer] == index
-                            val isOtherMatch = !isCurrentMatch && logSearchQuery.isNotBlank() &&
-                                    line.contains(logSearchQuery, ignoreCase = true)
-                            Text(
-                                line,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (isCurrentMatch) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        when {
-                                            isCurrentMatch -> MaterialTheme.colorScheme.primaryContainer
-                                            isOtherMatch -> MaterialTheme.colorScheme.secondaryContainer
-                                            else -> Color.Transparent
-                                        }
-                                    )
-                                    .padding(vertical = 1.dp)
-                            )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SelectionContainer {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 20.dp)
+                        ) {
+                            itemsIndexed(logLines) { index, line ->
+                                val isCurrentMatch = matchIndices.isNotEmpty() && matchIndices[currentMatchPointer] == index
+                                val isOtherMatch = !isCurrentMatch && logSearchQuery.isNotBlank() &&
+                                        line.contains(logSearchQuery, ignoreCase = true)
+                                Text(
+                                    line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isCurrentMatch) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            when {
+                                                isCurrentMatch -> MaterialTheme.colorScheme.primaryContainer
+                                                isOtherMatch -> MaterialTheme.colorScheme.secondaryContainer
+                                                else -> Color.Transparent
+                                            }
+                                        )
+                                        .padding(vertical = 1.dp)
+                                )
+                            }
                         }
                     }
+                    LogScrollbar(
+                        listState = listState,
+                        totalItems = logLines.size,
+                        coroutineScope = coroutineScope,
+                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
+                    )
                 }
             }
         }
@@ -652,5 +666,66 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.button_share_file)) }
         }
+    }
+}
+
+/** Compose's LazyColumn has no built-in visible scrollbar, so this draws one: a thumb sized
+ *  proportionally to (visible items / total items) and positioned from current scroll
+ *  progress, draggable to jump anywhere in the log instead of only flinging/dragging the
+ *  list itself — important once a log is thousands of lines long. */
+@Composable
+private fun LogScrollbar(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    totalItems: Int,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    modifier: Modifier = Modifier
+) {
+    if (totalItems <= 0) return
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier) {
+        val trackHeightPx = with(density) { maxHeight.toPx() }
+        val visibleCount = listState.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+        val thumbFraction = (visibleCount.toFloat() / totalItems).coerceIn(0.05f, 1f)
+        val thumbHeightPx = trackHeightPx * thumbFraction
+        val maxScrollableItems = (totalItems - visibleCount).coerceAtLeast(1)
+        val scrollFraction = (listState.firstVisibleItemIndex.toFloat() / maxScrollableItems).coerceIn(0f, 1f)
+        val thumbOffsetPx = (trackHeightPx - thumbHeightPx) * scrollFraction
+
+        fun scrollToFraction(fraction: Float) {
+            val targetIndex = (fraction.coerceIn(0f, 1f) * maxScrollableItems).roundToInt()
+            coroutineScope.launch { listState.scrollToItem(targetIndex) }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(4.dp)
+                .align(Alignment.CenterEnd)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset { androidx.compose.ui.unit.IntOffset(0, thumbOffsetPx.roundToInt()) }
+                .width(8.dp)
+                .height(with(density) { thumbHeightPx.toDp() })
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                )
+                .pointerInput(totalItems, maxScrollableItems) {
+                    var dragOffsetPx = thumbOffsetPx
+                    val trackRange = (trackHeightPx - thumbHeightPx).coerceAtLeast(1f)
+                    detectDragGestures(
+                        onDragStart = { dragOffsetPx = thumbOffsetPx },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            dragOffsetPx = (dragOffsetPx + dragAmount.y).coerceIn(0f, trackRange)
+                            scrollToFraction(dragOffsetPx / trackRange)
+                        }
+                    )
+                }
+        )
     }
 }
