@@ -161,14 +161,34 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    var permissionsExpanded by remember { mutableStateOf(true) }
+    var captureOptionsExpanded by remember { mutableStateOf(false) }
+
+    // The page scrolls as one unit so expanded Permissions/Capture Options sections never
+    // squeeze the app list down to nothing. Scrolling all the way back to the top
+    // auto-collapses both sections again, so the compact layout returns once you're done
+    // with them instead of staying expanded forever.
+    val pageScrollState = rememberScrollState()
+    var hasScrolledAway by remember { mutableStateOf(false) }
+    LaunchedEffect(pageScrollState) {
+        snapshotFlow { pageScrollState.value }.collect { value ->
+            if (value > 0) {
+                hasScrolledAway = true
+            } else if (hasScrolledAway) {
+                permissionsExpanded = false
+                captureOptionsExpanded = false
+                hasScrolledAway = false
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(pageScrollState)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text(stringResource(R.string.back_button)) }
             Text(stringResource(R.string.target_picker_title), style = MaterialTheme.typography.titleLarge)
         }
         Spacer(Modifier.height(8.dp))
 
-        var permissionsExpanded by remember { mutableStateOf(true) }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -257,7 +277,6 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         Divider()
         Spacer(Modifier.height(8.dp))
 
-        var captureOptionsExpanded by remember { mutableStateOf(false) }
         var networkTimingEnabled by remember { mutableStateOf(CaptureManager.isNetworkTimingEnabled(context)) }
         var anrTraceEnabled by remember { mutableStateOf(CaptureManager.isAnrTraceEnabled(context)) }
         var eventsBufferEnabled by remember { mutableStateOf(CaptureManager.isEventsBufferEnabled(context)) }
@@ -351,8 +370,8 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         }
         Spacer(Modifier.height(4.dp))
 
-        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
+        Row(modifier = Modifier.height(420.dp).fillMaxWidth()) {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxHeight()) {
                 items(displayedApps) { app ->
                     ListItem(
                         leadingContent = { AppIcon(pkg = app.pkg) },
