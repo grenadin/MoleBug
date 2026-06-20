@@ -44,6 +44,13 @@ android {
         }
     }
 
+    applicationVariants.all {
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output.outputFileName = "molebug-${defaultConfig.versionName}-${buildType.name}.apk"
+        }
+    }
+
     buildFeatures {
         compose = true
     }
