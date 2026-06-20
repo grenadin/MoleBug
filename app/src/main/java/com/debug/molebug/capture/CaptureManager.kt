@@ -22,6 +22,7 @@ object CaptureManager {
     private const val KEY_OPT_NETWORK_TIMING = "opt_network_timing"
     private const val KEY_OPT_ANR_TRACE = "opt_anr_trace"
     private const val KEY_OPT_EVENTS_BUFFER = "opt_events_buffer"
+    private const val KEY_OPT_STALL_WATCHDOG = "opt_stall_watchdog"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -127,4 +128,14 @@ object CaptureManager {
         prefs(context).getBoolean(KEY_OPT_EVENTS_BUFFER, true)
     fun setEventsBufferEnabled(context: Context, enabled: Boolean) =
         prefs(context).edit().putBoolean(KEY_OPT_EVENTS_BUFFER, enabled).apply()
+
+    /** Flags a "silent stall" — app stayed in the foreground with an attached pid but printed
+     *  no new log line for a while, e.g. a stuck coroutine that never crashes, never ANRs,
+     *  and never logs anything. Found via real device testing (Aurora Store's spinner hang
+     *  showed 0% CPU, no logcat output, and no pending network sockets — nothing else here
+     *  would have ever flagged it). */
+    fun isStallWatchdogEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_OPT_STALL_WATCHDOG, true)
+    fun setStallWatchdogEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_OPT_STALL_WATCHDOG, enabled).apply()
 }

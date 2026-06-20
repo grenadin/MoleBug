@@ -226,6 +226,7 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         var networkTimingEnabled by remember { mutableStateOf(CaptureManager.isNetworkTimingEnabled(context)) }
         var anrTraceEnabled by remember { mutableStateOf(CaptureManager.isAnrTraceEnabled(context)) }
         var eventsBufferEnabled by remember { mutableStateOf(CaptureManager.isEventsBufferEnabled(context)) }
+        var stallWatchdogEnabled by remember { mutableStateOf(CaptureManager.isStallWatchdogEnabled(context)) }
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -267,6 +268,15 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 onCheckedChange = {
                     eventsBufferEnabled = it
                     CaptureManager.setEventsBufferEnabled(context, it)
+                }
+            )
+            CaptureOptionRow(
+                checked = stallWatchdogEnabled,
+                label = stringResource(R.string.opt_stall_watchdog_label),
+                hint = stringResource(R.string.opt_stall_watchdog_hint),
+                onCheckedChange = {
+                    stallWatchdogEnabled = it
+                    CaptureManager.setStallWatchdogEnabled(context, it)
                 }
             )
         }

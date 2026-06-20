@@ -50,6 +50,8 @@
     <string name="opt_anr_trace_hint">อ่าน /data/anr เพื่อดู stack trace ของ thread ที่ค้างจริง — อาจอ่านไม่ได้ในทุกเครื่อง</string>
     <string name="opt_events_buffer_label">Events buffer</string>
     <string name="opt_events_buffer_hint">จับ events log buffer เพิ่มด้วย อาจมี ANR/WTF event ที่ไม่อยู่ใน main/system/crash</string>
+    <string name="opt_stall_watchdog_label">ตรวจจับแอปค้างเงียบ (Stall Watchdog)</string>
+    <string name="opt_stall_watchdog_hint">แจ้งเตือนเมื่อแอปค้างแบบไม่ crash/ANR/log อะไรเลย (เช่น coroutine ค้าง) พร้อม snapshot memory/network</string>
     <string name="section_target_app">แอปเป้าหมาย</string>
     <string name="search_apps_label">ค้นหาแอป</string>
     <string name="search_mode_label">ค้นหาด้วย:</string>

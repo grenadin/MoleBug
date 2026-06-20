@@ -50,6 +50,8 @@
     <string name="opt_anr_trace_hint">Reads /data/anr for the exact stuck thread\'s stack trace — may not be readable on all devices</string>
     <string name="opt_events_buffer_label">Events buffer</string>
     <string name="opt_events_buffer_hint">Also captures the events log buffer, which sometimes has ANR/WTF entries not in main/system/crash</string>
+    <string name="opt_stall_watchdog_label">Stall watchdog</string>
+    <string name="opt_stall_watchdog_hint">Flags a silent stuck app (no crash/ANR/log output at all, e.g. a stuck coroutine) with a memory/network snapshot</string>
     <string name="section_target_app">Target App</string>
     <string name="search_apps_label">Search apps</string>
     <string name="search_mode_label">Search by:</string>

@@ -33,6 +33,7 @@ class CaptureService : Service() {
         private const val CHANNEL_ID = "molebug_capture"
         private const val NOTI_ID = 1001
         private const val POLL_INTERVAL_MS = 1000L
+        private const val STALL_THRESHOLD_MS = 15000L
     }
 
     private var windowManager: WindowManager? = null
@@ -56,7 +57,11 @@ class CaptureService : Service() {
     private var networkTimingEnabled = true
     private var anrTraceEnabled = true
     private var eventsBufferEnabled = true
+    private var stallWatchdogEnabled = true
     private var foregroundSinceMs = 0L
+    private var lastAppLogLineMs = 0L
+    private var stallWarned = false
+    private val stallHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -91,11 +96,13 @@ class CaptureService : Service() {
         networkTimingEnabled = CaptureManager.isNetworkTimingEnabled(applicationContext)
         anrTraceEnabled = CaptureManager.isAnrTraceEnabled(applicationContext)
         eventsBufferEnabled = CaptureManager.isEventsBufferEnabled(applicationContext)
+        stallWatchdogEnabled = CaptureManager.isStallWatchdogEnabled(applicationContext)
         dumpLogcatBacklog(pkg)
         startSystemBufferWatcher(pkg)
         startLmkWatcher(pkg)
         startMemoryPolling()
         if (eventsBufferEnabled) startEventsWatcher(pkg)
+        if (stallWatchdogEnabled) startStallWatchdog(pkg)
     }
 
     /** A log line is "bulk listing" noise (e.g. Huawei's loadRunningPackages/appLruQueue
@@ -144,9 +151,12 @@ class CaptureService : Service() {
                     process.inputStream.bufferedReader().forEachLine { line ->
                         if (!logcatRunning) return@forEachLine
                         CaptureManager.appendLog(applicationContext, "[LOGCAT] $line")
+                        lastAppLogLineMs = System.currentTimeMillis()
+                        stallWarned = false
                         if (line.contains("FATAL EXCEPTION") || line.contains("AndroidRuntime")) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-CRASH] Found a real crash stack trace, see lines above")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                            logNetworkSocketSnapshotIfPossible()
                             logTimingIfEnabled()
                         }
                     }
@@ -190,6 +200,7 @@ class CaptureService : Service() {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] $line")
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-ANR] Detected an ANR (app not responding) for $pkg")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                            logNetworkSocketSnapshotIfPossible()
                             logTimingIfEnabled()
                             if (anrTraceEnabled) logAnrTraceIfAvailable()
                         }
@@ -202,6 +213,8 @@ class CaptureService : Service() {
                                 checkExitReason(pkg, previousPid)
                             }
                             currentPid = newPid
+                            lastAppLogLineMs = System.currentTimeMillis()
+                            stallWarned = false
                             logcatProcess?.destroy()
                             CaptureManager.appendLog(applicationContext, "[LOGCAT] attach pid=$newPid ($pkg)")
                             attachLogcatForPid(newPid)
@@ -286,6 +299,74 @@ class CaptureService : Service() {
         } catch (e: Exception) {
             "failed to read: ${e.message}"
         }
+    }
+
+    /** Counts the target's currently-open TCP sockets and any bytes still sitting in their
+     *  send/receive queues, by reading /proc/net/tcp[6] directly — plain file I/O, no exec
+     *  needed. Found while diagnosing a real Aurora Store hang: confirmed the app was NOT
+     *  actually waiting on a pending network response at that moment (0 active sockets with
+     *  queued bytes), which a logcat-only capture could never have shown either way. */
+    private fun networkSocketSnapshot(pkg: String): String {
+        return try {
+            val uid = packageManager.getApplicationInfo(pkg, 0).uid
+            var socketCount = 0
+            var queuedBytes = 0L
+            for (path in listOf("/proc/net/tcp", "/proc/net/tcp6")) {
+                val file = File(path)
+                if (!file.exists()) continue
+                file.readLines().drop(1).forEach { line ->
+                    val fields = line.trim().split(Regex("\\s+"))
+                    if (fields.size > 7 && fields[7].toIntOrNull() == uid) {
+                        socketCount++
+                        val queues = fields[4].split(":")
+                        val tx = queues.getOrNull(0)?.toLongOrNull(16) ?: 0L
+                        val rx = queues.getOrNull(1)?.toLongOrNull(16) ?: 0L
+                        queuedBytes += tx + rx
+                    }
+                }
+            }
+            "open_tcp_sockets=$socketCount queued_bytes=$queuedBytes"
+        } catch (e: Exception) {
+            "failed to read: ${e.message}"
+        }
+    }
+
+    private fun logNetworkSocketSnapshotIfPossible() {
+        val pkg = targetPkg ?: return
+        CaptureManager.appendLog(applicationContext, "[NETWORK-SOCKET] ${networkSocketSnapshot(pkg)}")
+    }
+
+    /** Catches the case a real device test turned up: an app silently stuck (e.g. a coroutine
+     *  awaiting something that never completes) with 0% CPU, no exception, no ANR, and no
+     *  pending network socket - nothing else in this service would ever flag it, since there's
+     *  no crash/ANR/LMK event to hook into. Polls every 5s once the target has been both in
+     *  the foreground and pid-attached for a while with no new log line from it. Fires once
+     *  per stall episode (resets on any new log line or pid change). */
+    private fun startStallWatchdog(pkg: String) {
+        val r = object : Runnable {
+            override fun run() {
+                if (!logcatRunning) return
+                val now = System.currentTimeMillis()
+                if (currentPid != -1 && foregroundSinceMs != 0L && !stallWarned) {
+                    val sinceForeground = now - foregroundSinceMs
+                    val sinceLastLine = if (lastAppLogLineMs != 0L) now - lastAppLogLineMs else sinceForeground
+                    if (sinceForeground > STALL_THRESHOLD_MS && sinceLastLine > STALL_THRESHOLD_MS) {
+                        stallWarned = true
+                        CaptureManager.appendLog(
+                            applicationContext,
+                            "[STALL-SUSPECTED] pid=$currentPid has printed no new log line for ${sinceLastLine}ms " +
+                                    "while in foreground for ${sinceForeground}ms — may be stuck (e.g. a blocked " +
+                                    "coroutine) without crashing, ANR-ing, or logging anything"
+                        )
+                        CaptureManager.appendLog(applicationContext, "[MEMORY] pid=$currentPid ${memorySnapshot(currentPid)}")
+                        CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
+                        logNetworkSocketSnapshotIfPossible()
+                    }
+                }
+                stallHandler.postDelayed(this, 5000)
+            }
+        }
+        stallHandler.postDelayed(r, 5000)
     }
 
     /** Logs how long the target app had been in the foreground before this crash/ANR — handy
@@ -414,8 +495,11 @@ class CaptureService : Service() {
         eventsWatcherProcess?.destroy()
         eventsWatcherProcess = null
         memoryHandler.removeCallbacksAndMessages(null)
+        stallHandler.removeCallbacksAndMessages(null)
         currentPid = -1
         foregroundSinceMs = 0L
+        lastAppLogLineMs = 0L
+        stallWarned = false
     }
 
     private fun buildNotification(): Notification {
@@ -571,7 +655,9 @@ class CaptureService : Service() {
                         if (e.packageName == pkg) {
                             val label = usageEventLabel(e.eventType)
                             CaptureManager.appendLog(applicationContext, "[USAGE] $pkg -> $label")
-                            if (label == "MOVED_TO_FOREGROUND" && networkTimingEnabled) {
+                            if (label == "MOVED_TO_FOREGROUND") {
+                                // Tracked unconditionally - both the timing log and the stall
+                                // watchdog read this, and they're independently toggleable.
                                 foregroundSinceMs = System.currentTimeMillis()
                             }
                             if (label == "MOVED_TO_BACKGROUND" || label == "ACTIVITY_STOPPED") {
