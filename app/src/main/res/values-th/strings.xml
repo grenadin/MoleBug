@@ -61,6 +61,7 @@
 
     <!-- Log viewer screen -->
     <string name="log_viewer_title">Log: %1$s</string>
+    <string name="log_file_size">ขนาดไฟล์ log: %1$s</string>
     <string name="status_capturing">🔴 กำลังจับ log… (พังไปแล้ว %1$d รอบ)</string>
     <string name="status_armed">🟡 รออยู่ — ยังไม่เปิดแอปเป้าหมาย</string>
     <string name="status_idle">⚪ ไม่ได้จับ log อยู่ (รวมพังทั้งหมด %1$d รอบ)</string>

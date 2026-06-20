@@ -83,6 +83,12 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
 }
 
+private fun formatFileSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    bytes >= 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "$bytes B"
+}
+
 /** ---------- Screen: pick a target app + grant permissions + arm capture ---------- */
 
 @Composable
@@ -491,6 +497,7 @@ fun LogViewerScreen(onBack: () -> Unit) {
     val target = CaptureManager.targetPackage(context)
     var capturing by remember { mutableStateOf(CaptureManager.isCapturing(context)) }
     var armed by remember { mutableStateOf(CaptureManager.isArmed(context)) }
+    var logFileSizeBytes by remember { mutableStateOf(CaptureManager.logPath(context)?.let { File(it).length() } ?: 0L) }
 
     // Poll the log file + state every second so the screen stays live while capturing
     LaunchedEffect(Unit) {
@@ -498,6 +505,7 @@ fun LogViewerScreen(onBack: () -> Unit) {
             logText = CaptureManager.readLog(context)
             capturing = CaptureManager.isCapturing(context)
             armed = CaptureManager.isArmed(context)
+            logFileSizeBytes = CaptureManager.logPath(context)?.let { File(it).length() } ?: 0L
             kotlinx.coroutines.delay(1000)
         }
     }
@@ -533,6 +541,10 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 else -> stringResource(R.string.status_idle, CaptureManager.crashCount(context))
             },
             style = MaterialTheme.typography.bodyMedium
+        )
+        Text(
+            stringResource(R.string.log_file_size, formatFileSize(logFileSizeBytes)),
+            style = MaterialTheme.typography.bodySmall
         )
 
         if (capturing) {

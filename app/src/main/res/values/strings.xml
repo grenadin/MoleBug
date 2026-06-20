@@ -61,6 +61,7 @@
 
     <!-- Log viewer screen -->
     <string name="log_viewer_title">Log: %1$s</string>
+    <string name="log_file_size">Log file size: %1$s</string>
     <string name="status_capturing">🔴 Capturing log… (%1$d crash(es) so far)</string>
     <string name="status_armed">🟡 Waiting — target app not opened yet</string>
     <string name="status_idle">⚪ Not capturing (total %1$d crash(es))</string>
