@@ -324,7 +324,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 Spacer(Modifier.height(16.dp))
 
                 if (allInstalled) {
-                    Button(onClick = {
+                    OutlinedButton(onClick = {
                         val allApps = DeviceInspector.listInstalledApps(context)
                         val file = DeviceInspector.exportLog(context, deviceInfo, checks, allApps)
                         exportedPath = file.absolutePath
@@ -361,7 +361,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onOpenCapture, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onOpenCapture, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.button_go_capture))
                 }
                 Spacer(Modifier.height(8.dp))
