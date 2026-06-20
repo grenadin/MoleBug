@@ -27,6 +27,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import com.debug.molebug.capture.CaptureManager
@@ -179,7 +180,11 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f).padding(vertical = 8.dp)
             )
-            Text(if (permissionsExpanded) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (permissionsExpanded) "▾" else "▸",
+                fontSize = 28.sp,
+                modifier = Modifier.padding(8.dp)
+            )
         }
 
         if (permissionsExpanded) {
@@ -269,7 +274,11 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f).padding(vertical = 8.dp)
             )
-            Text(if (captureOptionsExpanded) "▾" else "▸", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (captureOptionsExpanded) "▾" else "▸",
+                fontSize = 28.sp,
+                modifier = Modifier.padding(8.dp)
+            )
         }
 
         if (captureOptionsExpanded) {

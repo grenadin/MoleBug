@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -389,7 +390,11 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(if (exportContentExpanded) "▾" else "▸", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (exportContentExpanded) "▾" else "▸",
+                            fontSize = 28.sp,
+                            modifier = Modifier.padding(8.dp)
+                        )
                     }
 
                     if (exportContentExpanded) {
