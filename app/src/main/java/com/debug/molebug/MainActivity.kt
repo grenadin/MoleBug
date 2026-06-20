@@ -10,17 +10,23 @@ import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -354,17 +360,92 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                     )
                 }
                 exportedContent?.let { content ->
+                    var exportContentExpanded by remember { mutableStateOf(true) }
+                    var exportSearchQuery by remember { mutableStateOf("") }
+                    var exportMatchPointer by remember { mutableStateOf(0) }
+                    val exportLines = remember(content) { content.lines() }
+                    val exportListState = rememberLazyListState()
+                    val exportCoroutineScope = rememberCoroutineScope()
+                    val exportMatchIndices = remember(exportLines, exportSearchQuery) {
+                        if (exportSearchQuery.isBlank()) emptyList()
+                        else exportLines.indices.filter { exportLines[it].contains(exportSearchQuery, ignoreCase = true) }
+                    }
+                    fun jumpToExportMatch(pointer: Int) {
+                        if (exportMatchIndices.isEmpty()) return
+                        val clamped = ((pointer % exportMatchIndices.size) + exportMatchIndices.size) % exportMatchIndices.size
+                        exportMatchPointer = clamped
+                        exportCoroutineScope.launch { exportListState.scrollToItem(exportMatchIndices[clamped]) }
+                    }
+
                     Spacer(Modifier.height(8.dp))
-                    Card(modifier = Modifier.fillMaxWidth().height(240.dp)) {
-                        androidx.compose.foundation.text.selection.SelectionContainer {
-                            Text(
-                                content,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(12.dp),
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { exportContentExpanded = !exportContentExpanded }
+                    ) {
+                        Text(
+                            stringResource(R.string.exported_log_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(if (exportContentExpanded) "▾" else "▸", style = MaterialTheme.typography.titleSmall)
+                    }
+
+                    if (exportContentExpanded) {
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = exportSearchQuery,
+                            onValueChange = {
+                                exportSearchQuery = it
+                                exportMatchPointer = 0
+                                jumpToExportMatch(0)
+                            },
+                            label = { Text(stringResource(R.string.log_search_label)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (exportSearchQuery.isNotBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (exportMatchIndices.isEmpty()) stringResource(R.string.log_search_no_matches)
+                                    else stringResource(R.string.log_search_match_count, exportMatchPointer + 1, exportMatchIndices.size),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { jumpToExportMatch(exportMatchPointer - 1) }, enabled = exportMatchIndices.isNotEmpty()) {
+                                    Text(stringResource(R.string.log_search_previous))
+                                }
+                                TextButton(onClick = { jumpToExportMatch(exportMatchPointer + 1) }, enabled = exportMatchIndices.isNotEmpty()) {
+                                    Text(stringResource(R.string.log_search_next))
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Card(modifier = Modifier.fillMaxWidth().height(240.dp)) {
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                LazyColumn(state = exportListState, modifier = Modifier.fillMaxSize().padding(12.dp)) {
+                                    itemsIndexed(exportLines) { index, line ->
+                                        val isCurrentMatch = exportMatchIndices.isNotEmpty() && exportMatchIndices[exportMatchPointer] == index
+                                        val isOtherMatch = !isCurrentMatch && exportSearchQuery.isNotBlank() &&
+                                                line.contains(exportSearchQuery, ignoreCase = true)
+                                        Text(
+                                            line,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isCurrentMatch) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(
+                                                    when {
+                                                        isCurrentMatch -> MaterialTheme.colorScheme.primaryContainer
+                                                        isOtherMatch -> MaterialTheme.colorScheme.secondaryContainer
+                                                        else -> Color.Transparent
+                                                    }
+                                                )
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                     Spacer(Modifier.height(8.dp))

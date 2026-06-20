@@ -19,6 +19,7 @@
     <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
     <string name="status_log_saved">Log saved: %1$s</string>
     <string name="status_file_path">File: %1$s</string>
+    <string name="exported_log_title">Exported Log Content</string>
     <string name="section_capture_other_app">Capture Other App\'s Log Events</string>
     <string name="capture_intro">Pick a target app and capture crash/ANR events (event-based, not real logcat, since this device isn\'t rooted)</string>
     <string name="button_go_capture">Go to Target App Log Capture</string>

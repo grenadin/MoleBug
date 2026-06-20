@@ -19,6 +19,7 @@
     <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
     <string name="status_log_saved">บันทึก log สำเร็จ: %1$s</string>
     <string name="status_file_path">ไฟล์: %1$s</string>
+    <string name="exported_log_title">เนื้อหา Log ที่ Export ได้</string>
     <string name="section_capture_other_app">จับ Log เหตุการณ์ของแอปอื่น</string>
     <string name="capture_intro">เลือกแอปเป้าหมาย แล้วจับเหตุการณ์ crash/ANR แบบ event-based (ไม่ใช่ logcat จริง เพราะเครื่องไม่ได้ root)</string>
     <string name="button_go_capture">ไปหน้าจับ Log แอปเป้าหมาย</string>
