@@ -5,15 +5,32 @@
     <!-- Home screen -->
     <string name="app_title">MoleBug — Debug Checker</string>
     <string name="section_device_info">Device Information</string>
-    <string name="info_device_name">1. Device name</string>
-    <string name="info_model">2. Model</string>
-    <string name="info_build_number">3. Build number</string>
-    <string name="info_software_version">4. Software version</string>
-    <string name="info_emui_version">5. EMUI version</string>
-    <string name="info_cpu_abi">6. CPU ABI</string>
-    <string name="info_cpu_cores">7. CPU cores</string>
-    <string name="info_cpu_freq">8. CPU max frequency</string>
-    <string name="info_gpu_renderer">9. GPU renderer</string>
+
+    <string name="subsection_device">Device</string>
+    <string name="info_device_name">Device name</string>
+    <string name="info_model">Model</string>
+    <string name="info_build_number">Build number</string>
+    <string name="info_software_version">Software version</string>
+    <string name="info_emui_version">EMUI version</string>
+
+    <string name="subsection_cpu">CPU</string>
+    <string name="info_cpu_abi">CPU ABI</string>
+    <string name="info_cpu_cores">CPU cores</string>
+    <string name="info_cpu_vendor">CPU vendor</string>
+    <string name="info_cpu_freq">CPU max frequency</string>
+    <string name="info_cpu_cur_freq">CPU realtime frequency</string>
+
+    <string name="subsection_ram">RAM</string>
+    <string name="info_ram_total">RAM total</string>
+    <string name="info_ram_type">RAM type</string>
+
+    <string name="subsection_gpu">GPU</string>
+    <string name="info_gpu_renderer">GPU renderer</string>
+
+    <string name="subsection_battery">Battery</string>
+    <string name="info_battery_percent">Battery percent</string>
+    <string name="info_battery_health">Battery health</string>
+    <string name="info_battery_status">Battery status</string>
     <string name="section_check_components">Check Basic Apps</string>
     <string name="button_export_log">Get Installed App List + Save Log</string>
     <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>

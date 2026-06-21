@@ -610,16 +610,21 @@ class CaptureService : Service() {
         // Wait for the pill to be measured so the stop button can be placed right beside it
         // instead of guessing a fixed width for the "Record" text.
         recordRow.post {
-            showStopButton(x = rowParams.x + recordRow.width + dp(8), y = rowParams.y)
+            showStopButton(
+                x = rowParams.x + recordRow.width + dp(8),
+                y = rowParams.y,
+                size = recordRow.height
+            )
         }
     }
 
     /** Plain white square stop button (a classic media "stop" square inside it) placed beside
      *  the Record pill, so the user can stop capturing on demand at any point — not just
      *  after a crash — e.g. when they just wanted to capture a normal session with nothing
-     *  wrong. */
-    private fun showStopButton(x: Int, y: Int) {
-        val buttonSize = dp(40)
+     *  wrong. Sized and aligned to match the Record pill's height so the two sit flush
+     *  together instead of the button towering over the pill. */
+    private fun showStopButton(x: Int, y: Int, size: Int) {
+        val buttonSize = size
 
         val button = FrameLayout(this).apply {
             background = GradientDrawable().apply {
@@ -631,9 +636,10 @@ class CaptureService : Service() {
             setOnClickListener { stopCaptureInternal("User tapped the stop button on the floating overlay") }
         }
         val stopIcon = View(this).apply { setBackgroundColor(Color.parseColor("#444444")) }
+        val iconSize = (buttonSize * 0.4f).toInt()
         button.addView(
             stopIcon,
-            FrameLayout.LayoutParams(dp(16), dp(16)).apply { gravity = Gravity.CENTER }
+            FrameLayout.LayoutParams(iconSize, iconSize).apply { gravity = Gravity.CENTER }
         )
 
         val params = WindowManager.LayoutParams(

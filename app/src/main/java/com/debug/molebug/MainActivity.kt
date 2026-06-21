@@ -1,9 +1,12 @@
 package com.debug.molebug
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -51,7 +54,14 @@ data class DeviceInfo(
     val cpuAbi: String,
     val cpuCores: Int,
     val cpuMaxFreqMHz: String,
-    val gpuRenderer: String
+    val gpuRenderer: String,
+    val ramTotal: String,
+    val ramType: String,
+    val cpuVendor: String,
+    val cpuCurFreqMHz: String,
+    val batteryPercent: String,
+    val batteryHealth: String,
+    val batteryStatus: String
 )
 
 /** -------- Helpers -------- */
@@ -69,8 +79,121 @@ object DeviceInspector {
             cpuAbi = Build.SUPPORTED_ABIS.joinToString(", "),
             cpuCores = Runtime.getRuntime().availableProcessors(),
             cpuMaxFreqMHz = readCpuMaxFreqMHz(),
-            gpuRenderer = readGpuRenderer()
+            gpuRenderer = readGpuRenderer(),
+            ramTotal = readRamTotal(context),
+            ramType = readRamType(),
+            cpuVendor = readCpuVendor(),
+            cpuCurFreqMHz = readCpuCurFreqMHz(),
+            batteryPercent = readBatteryPercent(context),
+            batteryHealth = readBatteryHealth(context),
+            batteryStatus = readBatteryStatus(context)
         )
+    }
+
+    /** Total physical RAM via ActivityManager.MemoryInfo — the only RAM size source that
+     *  doesn't need root or parsing /proc/meminfo directly. */
+    private fun readRamTotal(context: Context): String {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val info = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(info)
+            "${info.totalMem / (1024 * 1024)} MB"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** RAM chip type (e.g. LPDDR4X) isn't exposed by any public Android API; only some vendors
+     *  leak it through a boot system property. Best-effort across the property names seen on
+     *  real devices, otherwise honestly report it as unavailable. */
+    private fun readRamType(): String {
+        val candidates = listOf(
+            "ro.boot.ddr_type", "ro.boot.hardware.ddr", "ro.boot.ddr_vendor",
+            "ro.boot.ram_type", "ro.product.ram_type"
+        )
+        for (key in candidates) {
+            val v = getProp(key)
+            if (v.isNotEmpty()) return v
+        }
+        return "Unknown (not exposed by Android API on this device)"
+    }
+
+    /** CPU manufacturer. Build.SOC_MANUFACTURER (API 31+) is the official field; older devices
+     *  fall back to the "Hardware"/"vendor_id" line in /proc/cpuinfo, then Build.HARDWARE. */
+    private fun readCpuVendor(): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val soc = Build.SOC_MANUFACTURER
+            if (soc.isNotEmpty() && soc != Build.UNKNOWN) return soc
+        }
+        return try {
+            val line = File("/proc/cpuinfo").readLines()
+                .firstOrNull { it.startsWith("Hardware") || it.startsWith("vendor_id") }
+            line?.substringAfter(":")?.trim()?.ifEmpty { null } ?: Build.HARDWARE
+        } catch (e: Exception) {
+            Build.HARDWARE
+        }
+    }
+
+    /** Current (not max) clock speed, read live from sysfs — same permission-free path as
+     *  cpuinfo_max_freq, just the "scaling_cur_freq" sibling file. */
+    private fun readCpuCurFreqMHz(): String {
+        return try {
+            val freqsKHz = (0 until Runtime.getRuntime().availableProcessors()).mapNotNull { core ->
+                File("/sys/devices/system/cpu/cpu$core/cpufreq/scaling_cur_freq")
+                    .takeIf { it.exists() }
+                    ?.readText()?.trim()?.toLongOrNull()
+            }
+            if (freqsKHz.isEmpty()) return "unavailable (not readable on this device)"
+            freqsKHz.joinToString(", ") { "${it / 1000} MHz" }
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    private fun batteryIntent(context: Context) =
+        context.applicationContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+
+    private fun readBatteryPercent(context: Context): String {
+        return try {
+            val intent = batteryIntent(context) ?: return "unavailable"
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            if (level < 0 || scale <= 0) "unavailable" else "${(level * 100 / scale)}%"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    private fun readBatteryHealth(context: Context): String {
+        return try {
+            val intent = batteryIntent(context) ?: return "unavailable"
+            when (intent.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)) {
+                BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+                BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+                BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+                BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over voltage"
+                BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "Unspecified failure"
+                BatteryManager.BATTERY_HEALTH_COLD -> "Cold"
+                else -> "Unknown"
+            }
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    private fun readBatteryStatus(context: Context): String {
+        return try {
+            val intent = batteryIntent(context) ?: return "unavailable"
+            when (intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)) {
+                BatteryManager.BATTERY_STATUS_CHARGING -> "Charging"
+                BatteryManager.BATTERY_STATUS_FULL -> "Charging (full)"
+                BatteryManager.BATTERY_STATUS_DISCHARGING -> "Not charging (discharging)"
+                BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "Not charging"
+                else -> "Unknown"
+            }
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
     }
 
     /** Highest of each core's cpuinfo_max_freq under sysfs — plain file reads, no special
@@ -210,15 +333,27 @@ object DeviceInspector {
         sb.appendLine("Timestamp: $ts")
         sb.appendLine()
         sb.appendLine("---- Device Info ----")
+        sb.appendLine("[Device]")
         sb.appendLine("Device name: ${deviceInfo.deviceName}")
         sb.appendLine("Model: ${deviceInfo.model}")
         sb.appendLine("Build number: ${deviceInfo.buildNumber}")
         sb.appendLine("Software version: ${deviceInfo.softwareVersion}")
         sb.appendLine("EMUI version: ${deviceInfo.emuiVersion}")
+        sb.appendLine("[CPU]")
         sb.appendLine("CPU ABI: ${deviceInfo.cpuAbi}")
         sb.appendLine("CPU cores: ${deviceInfo.cpuCores}")
+        sb.appendLine("CPU vendor: ${deviceInfo.cpuVendor}")
         sb.appendLine("CPU max frequency: ${deviceInfo.cpuMaxFreqMHz}")
+        sb.appendLine("CPU realtime frequency: ${deviceInfo.cpuCurFreqMHz}")
+        sb.appendLine("[RAM]")
+        sb.appendLine("RAM total: ${deviceInfo.ramTotal}")
+        sb.appendLine("RAM type: ${deviceInfo.ramType}")
+        sb.appendLine("[GPU]")
         sb.appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
+        sb.appendLine("[Battery]")
+        sb.appendLine("Battery percent: ${deviceInfo.batteryPercent}")
+        sb.appendLine("Battery health: ${deviceInfo.batteryHealth}")
+        sb.appendLine("Battery status: ${deviceInfo.batteryStatus}")
         sb.appendLine()
         sb.appendLine("---- Required Components ----")
         checks.forEach {
@@ -286,12 +421,31 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     var exportedPath by remember { mutableStateOf<String?>(null) }
     var exportedContent by remember { mutableStateOf<String?>(null) }
 
+    // The Device Info card auto-collapses to just its title once the page is scrolled away
+    // from the top, then expands again on scroll-back-to-top — same pattern as the Target
+    // Picker's Permissions/Capture Options sections, so the card doesn't eat the whole
+    // screen while the user is trying to get to Check Basic Apps / Export below it.
+    var deviceInfoExpanded by remember { mutableStateOf(true) }
+    val pageScrollState = rememberScrollState()
+    var hasScrolledAway by remember { mutableStateOf(false) }
+    LaunchedEffect(pageScrollState) {
+        snapshotFlow { pageScrollState.value }.collect { value ->
+            if (value > 0) {
+                hasScrolledAway = true
+                deviceInfoExpanded = false
+            } else if (hasScrolledAway) {
+                deviceInfoExpanded = true
+                hasScrolledAway = false
+            }
+        }
+    }
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .verticalScroll(pageScrollState)
                     .padding(16.dp)
             ) {
                 Row(
@@ -312,16 +466,54 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 }
                 Spacer(Modifier.height(16.dp))
 
-                SectionTitle(stringResource(R.string.section_device_info))
-                InfoRow(stringResource(R.string.info_device_name), deviceInfo.deviceName)
-                InfoRow(stringResource(R.string.info_model), deviceInfo.model)
-                InfoRow(stringResource(R.string.info_build_number), deviceInfo.buildNumber)
-                InfoRow(stringResource(R.string.info_software_version), deviceInfo.softwareVersion)
-                InfoRow(stringResource(R.string.info_emui_version), deviceInfo.emuiVersion)
-                InfoRow(stringResource(R.string.info_cpu_abi), deviceInfo.cpuAbi)
-                InfoRow(stringResource(R.string.info_cpu_cores), deviceInfo.cpuCores.toString())
-                InfoRow(stringResource(R.string.info_cpu_freq), deviceInfo.cpuMaxFreqMHz)
-                InfoRow(stringResource(R.string.info_gpu_renderer), deviceInfo.gpuRenderer)
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { deviceInfoExpanded = !deviceInfoExpanded }
+                        ) {
+                            Text(
+                                stringResource(R.string.section_device_info),
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                if (deviceInfoExpanded) "▾" else "▸",
+                                fontSize = 28.sp
+                            )
+                        }
+
+                        if (deviceInfoExpanded) {
+                            SubsectionLabel(stringResource(R.string.subsection_device))
+                            InfoRow(stringResource(R.string.info_device_name), deviceInfo.deviceName)
+                            InfoRow(stringResource(R.string.info_model), deviceInfo.model)
+                            InfoRow(stringResource(R.string.info_build_number), deviceInfo.buildNumber)
+                            InfoRow(stringResource(R.string.info_software_version), deviceInfo.softwareVersion)
+                            InfoRow(stringResource(R.string.info_emui_version), deviceInfo.emuiVersion)
+
+                            SubsectionLabel(stringResource(R.string.subsection_cpu))
+                            InfoRow(stringResource(R.string.info_cpu_abi), deviceInfo.cpuAbi)
+                            InfoRow(stringResource(R.string.info_cpu_cores), deviceInfo.cpuCores.toString())
+                            InfoRow(stringResource(R.string.info_cpu_vendor), deviceInfo.cpuVendor)
+                            InfoRow(stringResource(R.string.info_cpu_freq), deviceInfo.cpuMaxFreqMHz)
+                            InfoRow(stringResource(R.string.info_cpu_cur_freq), deviceInfo.cpuCurFreqMHz)
+
+                            SubsectionLabel(stringResource(R.string.subsection_ram))
+                            InfoRow(stringResource(R.string.info_ram_total), deviceInfo.ramTotal)
+                            InfoRow(stringResource(R.string.info_ram_type), deviceInfo.ramType)
+
+                            SubsectionLabel(stringResource(R.string.subsection_gpu))
+                            InfoRow(stringResource(R.string.info_gpu_renderer), deviceInfo.gpuRenderer)
+
+                            SubsectionLabel(stringResource(R.string.subsection_battery))
+                            InfoRow(stringResource(R.string.info_battery_percent), deviceInfo.batteryPercent)
+                            InfoRow(stringResource(R.string.info_battery_health), deviceInfo.batteryHealth)
+                            InfoRow(stringResource(R.string.info_battery_status), deviceInfo.batteryStatus)
+                        }
+                    }
+                }
 
                 Spacer(Modifier.height(16.dp))
                 SectionTitle(stringResource(R.string.section_check_components))
@@ -497,6 +689,16 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
 @Composable
 fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
+}
+
+@Composable
+fun SubsectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+    )
 }
 
 @Composable

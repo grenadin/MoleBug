@@ -24,7 +24,12 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
 ## Features
 
 ### System Check (Home screen)
-- Device info: manufacturer/model, EMUI version, CPU ABI/cores/max frequency, GPU renderer (queried via a throwaway EGL context)
+- Device info, shown in a collapsible card (auto-collapses to just the title on scroll, re-expands at the top) and grouped by category — Device, CPU, RAM, GPU, Battery:
+  - **Device**: manufacturer/model, EMUI version
+  - **CPU**: ABI, cores, vendor, max frequency, realtime (current) frequency
+  - **RAM**: total, type (best-effort vendor property, since Android exposes no public API for it)
+  - **GPU**: renderer string (queried via a throwaway EGL context)
+  - **Battery**: percent, health, charging status
 - Checks 4 required components for a working microG setup: microG Services, Framework Proxy, microG Companion (Play Store substitute), Aurora Store — each with installed version and installer source
 - Export a full snapshot (device info + component status + every installed app with version/installer) to a text file, with in-app search, collapsible preview, and a Share button
 
