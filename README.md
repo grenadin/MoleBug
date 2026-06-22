@@ -87,6 +87,12 @@ Open in Android Studio and run normally also works — `gradlew`/wrapper files a
 
 UI text follows the device's system language: Thai (`values-th`) when set to Thai, English (default `values`) otherwise. Diagnostic log content written to capture files (`[LOGCAT]`, `[SYSTEM]`, etc.) is always English, regardless of device locale, so logs stay greppable/searchable consistently.
 
+## Privacy
+
+- Logs never leave the device on their own — there's no analytics, no telemetry, no background upload. The only way a log leaves the device is the explicit Share button.
+- Captured lines come straight from logcat/system buffers written by *the target app itself* — MoleBug only filters by package name, it doesn't understand the content. Before every line is written to disk, it's run through a redaction pass that masks email addresses, `Authorization`/`Bearer` header values, JWTs, long opaque tokens (API keys/session ids), and card-number-shaped digit runs — a safety net for the case where the target app's own logging accidentally includes something sensitive.
+- Capture/export log files live in the app's own external-files directory (`Android/data/com.debug.molebug/...`), which other apps can't read directly on Android 11+ — only reachable through MoleBug's own `FileProvider` grants (Share button, Files-app copy).
+
 ## Known limitations
 
 - `pidof`/`ps`/`sh` cannot be exec'd from the app's own process (SELinux `untrusted_app` domain) — pid discovery is done by parsing `ProcessRecord` text out of the `system` log buffer instead, which `logcat` itself can read.

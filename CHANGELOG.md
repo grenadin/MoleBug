@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3 (versionCode 4)
+
+### Added
+- Share intents now pre-fill an AI-analysis prompt alongside the attached log file (both the Home-screen export log and the capture log), for share targets that read `EXTRA_TEXT` next to a file (most chat-style AI apps).
+- Sensitive-data redaction on every captured log line before it's written to disk: email addresses, Authorization/Bearer header values, JWTs, long opaque tokens (API keys/session ids), and card-number-shaped digit runs are masked. Protects against the target app itself accidentally logging sensitive data that would otherwise be captured verbatim and potentially shared with a third party.
+
 ## 1.2 (versionCode 3)
 
 ### Added

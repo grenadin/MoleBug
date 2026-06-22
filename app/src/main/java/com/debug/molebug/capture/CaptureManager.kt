@@ -153,10 +153,41 @@ object CaptureManager {
         prefs(context).edit().putBoolean(KEY_ARMED, false).putBoolean(KEY_CAPTURING, false).apply()
     }
 
+    // Captured lines come straight from logcat/system buffers written by whatever app we're
+    // watching — we don't control or understand their content, only filter by package name.
+    // If the target app itself logs something sensitive (a bug on its end), we'd otherwise
+    // copy it verbatim into a file the user might later hand to a third party. These patterns
+    // catch the common shapes of sensitive data without trying to parse semantics: email
+    // addresses, Authorization/Bearer header values, JWTs, long opaque tokens (API keys,
+    // session ids), and card-number-shaped digit runs.
+    private val emailRegex = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+    private val authHeaderRegex = Regex("(?i)(Authorization|Bearer)(\\s*[:=]?\\s*)\\S+")
+    private val jwtRegex = Regex("[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}")
+    private val longTokenRegex = Regex("\\b[A-Za-z0-9+/_-]{32,}={0,2}\\b")
+    // A bare 13-digit run is almost always an epoch-millisecond timestamp (extremely common in
+    // logs), so this only fires on a clearly card-shaped layout: groups of 4 separated by a
+    // space/dash, or an unseparated 15-16 digit run (Amex/Visa-Mastercard length) — deliberately
+    // not matching plain 13/14/17-19 digit blobs to avoid redacting timestamps and other
+    // ordinary numeric IDs.
+    private val cardNumberRegex = Regex("\\b(?:\\d{4}[ -]\\d{4}[ -]\\d{4}[ -]\\d{1,4}|\\d{15,16})\\b")
+
+    /** Redacts the common shapes of sensitive data (see field docs above) before a line ever
+     *  touches disk — applied once, here, since every captured line funnels through this one
+     *  function regardless of which watcher (logcat, ANR trace, events buffer, etc.) found it. */
+    private fun redactSensitive(line: String): String {
+        var redacted = line
+        redacted = authHeaderRegex.replace(redacted) { m -> "${m.groupValues[1]}${m.groupValues[2]}[REDACTED-AUTH]" }
+        redacted = jwtRegex.replace(redacted, "[REDACTED-TOKEN]")
+        redacted = emailRegex.replace(redacted, "[REDACTED-EMAIL]")
+        redacted = longTokenRegex.replace(redacted, "[REDACTED-TOKEN]")
+        redacted = cardNumberRegex.replace(redacted, "[REDACTED-NUMBER]")
+        return redacted
+    }
+
     fun appendLog(context: Context, line: String) {
         val path = logPath(context) ?: return
         val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-        File(path).appendText("[$ts] $line\n")
+        File(path).appendText("[$ts] ${redactSensitive(line)}\n")
     }
 
     fun readLog(context: Context): String {
