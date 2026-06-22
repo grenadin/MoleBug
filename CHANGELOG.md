@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2 (versionCode 3)
+
+### Added
+- **Target App Info** captured in every capture-log header: install source, install date, requested permissions with grant state, network data used since install, notification status, and APK MD5/SHA-1/SHA-256 checksums.
+- New crash-diagnostic coverage for previously-invisible failure modes:
+  - Black-screen/render-stall detection (Choreographer, OpenGLRenderer, MediaCodec/NuPlayer/ExoPlayer)
+  - GMS/microG API failure detection (sign-in loops, dead-object errors)
+  - SELinux denial detection
+  - Native crash signal detection (non-Java crashes)
+  - Force-stopped state and free internal storage logged at arm time
+- Device Information card: each category (Device/CPU/RAM/GPU/Battery) now collapses independently, per-core CPU frequency mini-cards with live 1s polling, CPU/GPU temperature, GPU frequency, RAM used — all live values, plus a glassy card visual style.
+- GMS/microG conflict detection for ReVanced/Vanced packages, with red (real package conflict) vs yellow (patching tool only) warning cards.
+- Permissions setup moved off the Target Picker screen onto a Home-screen modal that pops in shortly after launch, collapses to a small pastel pill once Tier 1 is granted, and gates the "Go to Target App Log Capture" button until Tier 1 is satisfied.
+- Target Picker: Tier 1/2 badge next to "Target App" with a hint of what's missing at Tier 1, Capture Options moved below the Start Capture button, narrower search field, trimmed app-list height so the Start button stays visible without scrolling.
+- Log Viewer: ADB grant commands now shown as a mock terminal (black background, green text) instead of a copy button; a Files-app icon copies the current log to the public Download/MoleBug folder and opens the Files app.
+- 3D-styled primary buttons across Home, Target Picker, and Log Viewer.
+
 ## 1.1 (versionCode 2)
 
 ### Added
