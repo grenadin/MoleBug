@@ -1131,6 +1131,11 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             val intent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_STREAM, uri)
+                                // Pre-fills a prompt alongside the file for share targets that
+                                // read EXTRA_TEXT even with a stream attached (most chat-style
+                                // AI apps do) — not guaranteed for every app, but costs nothing
+                                // for the ones that ignore it.
+                                putExtra(Intent.EXTRA_TEXT, context.getString(R.string.ai_prompt_export_log))
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_chooser_title)))

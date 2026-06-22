@@ -120,6 +120,8 @@
     <string name="copy_to_downloads_failed">Couldn\'t copy the log to Download/MoleBug — opening Files app anyway</string>
     <string name="copied_to_downloads_hint">Log copied — open Files app and go to Download/MoleBug</string>
     <string name="share_chooser_title">Share log file</string>
+    <string name="ai_prompt_capture_log">I\'m attaching an Android debug log captured by MoleBug for the app %1$s. Please analyze it and help me find the cause of the crash/ANR/issue, citing the specific log lines that show the root cause.</string>
+    <string name="ai_prompt_export_log">I\'m attaching an Android device/system-check log exported by MoleBug. Please review it and flag anything that looks misconfigured or broken.</string>
 
     <!-- Capture notification -->
     <string name="notif_channel_name">MoleBug Capture</string>

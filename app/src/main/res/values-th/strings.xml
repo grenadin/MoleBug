@@ -92,6 +92,8 @@
     <string name="copy_to_downloads_failed">คัดลอก log ไป Download/MoleBug ไม่สำเร็จ — เปิดแอป Files ให้แทน</string>
     <string name="copied_to_downloads_hint">คัดลอก log แล้ว — เปิดแอป Files แล้วไปที่ Download/MoleBug</string>
     <string name="share_chooser_title">ส่งไฟล์ log</string>
+    <string name="ai_prompt_capture_log">นี่คือไฟล์ debug log จากแอป MoleBug ของแอป %1$s ช่วยวิเคราะห์หาสาเหตุของ crash/ANR/ปัญหาที่เกิดขึ้น พร้อมอ้างอิงบรรทัด log ที่แสดงสาเหตุนั้นด้วย</string>
+    <string name="ai_prompt_export_log">นี่คือไฟล์ log ตรวจสอบอุปกรณ์/ระบบที่ export จากแอป MoleBug ช่วยตรวจสอบและแจ้งจุดที่ดูผิดปกติหรือตั้งค่าไม่ถูกต้องด้วย</string>
 
     <!-- Capture notification -->
     <string name="notif_channel_name">MoleBug บันทึก Log</string>

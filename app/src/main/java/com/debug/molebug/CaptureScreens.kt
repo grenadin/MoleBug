@@ -757,6 +757,15 @@ fun LogViewerScreen(onBack: () -> Unit) {
                     val intent = Intent(Intent.ACTION_SEND).apply {
                         type = "application/zip"
                         putExtra(Intent.EXTRA_STREAM, uri)
+                        // Pre-fills a prompt alongside the attached file for share targets
+                        // that read EXTRA_TEXT (most chat-style AI apps do, even with a file
+                        // attached) — saves typing the same framing every time you hand a log
+                        // off for analysis. Apps that ignore EXTRA_TEXT when a stream is
+                        // present just show the file with no prompt, same as before.
+                        putExtra(
+                            Intent.EXTRA_TEXT,
+                            context.getString(R.string.ai_prompt_capture_log, target ?: "the target app")
+                        )
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_chooser_title)))
