@@ -60,10 +60,10 @@ fun MoleBugRoot(screenState: MutableState<Screen> = remember { mutableStateOf(Sc
 
 /** ---------- Permission helpers ---------- */
 
-private fun hasOverlayPermission(context: Context): Boolean =
+fun hasOverlayPermission(context: Context): Boolean =
     Settings.canDrawOverlays(context)
 
-private fun hasUsageAccess(context: Context): Boolean {
+fun hasUsageAccess(context: Context): Boolean {
     return try {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
         val mode = appOps.checkOpNoThrow(
@@ -76,7 +76,7 @@ private fun hasUsageAccess(context: Context): Boolean {
     }
 }
 
-private fun isAccessibilityServiceEnabled(context: Context): Boolean {
+fun isAccessibilityServiceEnabled(context: Context): Boolean {
     val expected = "${context.packageName}/${context.packageName}.capture.MoleAccessibilityService"
     val enabled = Settings.Secure.getString(
         context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -84,10 +84,37 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
 }
 
-private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+fun isIgnoringBatteryOptimizations(context: Context): Boolean {
     return try {
         val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         pm.isIgnoringBatteryOptimizations(context.packageName)
+    } catch (e: Exception) {
+        false
+    }
+}
+
+/** Copies a file into the public Download/MoleBug folder via MediaStore — the only folder a
+ *  third-party file manager can reliably browse into on Android 11+, since our own app's
+ *  external-files directory (Android/data/<pkg>/...) is OS-blocked from SAF/file-manager
+ *  access entirely, for every app including the owner. No storage permission needed; writing
+ *  through MediaStore's own Downloads collection is always allowed for an app's own inserts. */
+private fun copyFileToPublicDownloads(context: Context, source: File): Boolean {
+    if (!source.exists()) return false
+    // MediaStore.Downloads is API 29+; older devices fall back to just opening the Files app
+    // with no folder target, same as before this change.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+    return try {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, source.name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "${android.os.Environment.DIRECTORY_DOWNLOADS}/MoleBug")
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+        resolver.openOutputStream(uri)?.use { out ->
+            source.inputStream().use { it.copyTo(out) }
+        }
+        true
     } catch (e: Exception) {
         false
     }
@@ -146,7 +173,12 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
             .sortedBy { it.label.lowercase() }
     }
 
-    // Re-check permission state whenever the user comes back from the Settings screen
+    var readLogsOk by remember { mutableStateOf(CaptureManager.hasReadLogsPermission(context)) }
+    var dumpOk by remember { mutableStateOf(CaptureManager.hasDumpPermission(context)) }
+
+    // Re-check permission state whenever the user comes back from the Settings screen —
+    // permissions themselves are now granted from the Home screen's modal, but this screen
+    // still needs the live state for the Tier badge and to gate the Start Capture button.
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -155,19 +187,20 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 usageOk = hasUsageAccess(context)
                 a11yOk = isAccessibilityServiceEnabled(context)
                 batteryOptOk = isIgnoringBatteryOptimizations(context)
+                readLogsOk = CaptureManager.hasReadLogsPermission(context)
+                dumpOk = CaptureManager.hasDumpPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    var permissionsExpanded by remember { mutableStateOf(true) }
     var captureOptionsExpanded by remember { mutableStateOf(false) }
 
-    // The page scrolls as one unit so expanded Permissions/Capture Options sections never
-    // squeeze the app list down to nothing. Scrolling all the way back to the top
-    // auto-collapses both sections again, so the compact layout returns once you're done
-    // with them instead of staying expanded forever.
+    // The page scrolls as one unit so an expanded Capture Options section never squeezes the
+    // app list down to nothing. Scrolling all the way back to the top auto-collapses it again,
+    // so the compact layout returns once you're done with it instead of staying expanded
+    // forever.
     val pageScrollState = rememberScrollState()
     var hasScrolledAway by remember { mutableStateOf(false) }
     LaunchedEffect(pageScrollState) {
@@ -175,12 +208,14 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
             if (value > 0) {
                 hasScrolledAway = true
             } else if (hasScrolledAway) {
-                permissionsExpanded = false
                 captureOptionsExpanded = false
                 hasScrolledAway = false
             }
         }
     }
+
+    val allPermsOk = overlayOk && usageOk && a11yOk
+    val tier = if (readLogsOk && dumpOk) 2 else if (allPermsOk) 1 else 0
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(pageScrollState)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -189,88 +224,156 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { permissionsExpanded = !permissionsExpanded }
-        ) {
+        // Title/tier/search packed tighter (no SectionTitle's usual vertical padding) to free
+        // up vertical space so Capture Options further down becomes reachable without as
+        // much scrolling.
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                stringResource(R.string.section_permissions_needed),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f).padding(vertical = 8.dp)
+                stringResource(R.string.section_target_app),
+                style = MaterialTheme.typography.titleMedium
             )
+            Spacer(Modifier.width(8.dp))
             Text(
-                if (permissionsExpanded) "▾" else "▸",
-                fontSize = 28.sp,
-                modifier = Modifier.padding(8.dp)
+                when (tier) {
+                    2 -> stringResource(R.string.tier_badge_2)
+                    1 -> stringResource(R.string.tier_badge_1)
+                    else -> stringResource(R.string.tier_badge_none)
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = if (tier == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
             )
         }
+        if (tier == 1) {
+            Text(
+                stringResource(R.string.tier_1_missing_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
 
-        if (permissionsExpanded) {
-            PermissionRow(
-                label = stringResource(R.string.perm_overlay), granted = overlayOk,
-                onClick = {
-                    context.startActivity(
-                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+        // Placeholder instead of a floating label, plus a smaller text style — a floating
+        // label reserves extra vertical space above the text for its animated shrink/rise,
+        // which is what was actually making this field tall (it was never about the width).
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text(stringResource(R.string.search_apps_label), style = MaterialTheme.typography.bodySmall) },
+            textStyle = MaterialTheme.typography.bodySmall,
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 0.dp)
+        )
+        Spacer(Modifier.height(2.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.search_mode_label), style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = !searchByPackage,
+                onClick = { searchByPackage = false },
+                label = { Text(stringResource(R.string.search_by_name)) }
+            )
+            Spacer(Modifier.width(4.dp))
+            FilterChip(
+                selected = searchByPackage,
+                onClick = { searchByPackage = true },
+                label = { Text(stringResource(R.string.search_by_package)) }
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+
+        // Shortened by roughly one list row's height (~72dp) from the original 420dp so the
+        // "Start Capturing Log" button below stays visible without scrolling — otherwise
+        // users who never scroll the app list wouldn't realize it's scrollable at all.
+        Row(modifier = Modifier.height(348.dp).fillMaxWidth()) {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxHeight()) {
+                items(displayedApps) { app ->
+                    ListItem(
+                        leadingContent = { AppIcon(pkg = app.pkg) },
+                        headlineContent = { Text(app.label) },
+                        supportingContent = { Text(app.pkg, style = MaterialTheme.typography.bodySmall) },
+                        trailingContent = {
+                            RadioButton(
+                                selected = selectedPkg == app.pkg,
+                                onClick = { selectedPkg = app.pkg }
+                            )
+                        },
+                        modifier = Modifier.clickable { selectedPkg = app.pkg }
                     )
+                    Divider()
                 }
-            )
-            PermissionRow(
-                label = stringResource(R.string.perm_usage_access), granted = usageOk,
-                onClick = { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
-            )
-            PermissionRow(
-                label = stringResource(R.string.perm_accessibility), granted = a11yOk,
-                onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-            )
-            PermissionRow(
-                label = stringResource(R.string.perm_battery_opt), granted = batteryOptOk,
-                onClick = {
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                            Uri.parse("package:${context.packageName}")
-                        )
-                    )
-                }
-            )
-            if (!batteryOptOk) {
-                Text(
-                    stringResource(R.string.perm_battery_opt_huawei_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
-                )
             }
 
-            val readLogsOk = remember { CaptureManager.hasReadLogsPermission(context) }
-            val dumpOk = remember { CaptureManager.hasDumpPermission(context) }
-            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+            // A-Z fast-scroll index, shown only while the search box is empty so it can jump
+            // around the full unfiltered list instead of a filtered subset.
+            if (searchQuery.isBlank() && letterIndex.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    ('A'..'Z').forEach { letter ->
+                        val available = letterIndex.containsKey(letter)
+                        Text(
+                            letter.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (available)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                            modifier = Modifier
+                                .padding(vertical = 1.dp, horizontal = 4.dp)
+                                .clickable {
+                                    val keys = letterIndex.keys.sorted()
+                                    val targetIndex = letterIndex[letter]
+                                        ?: keys.firstOrNull { it >= letter }?.let { letterIndex[it] }
+                                        ?: keys.lastOrNull()?.let { letterIndex[it] }
+                                    targetIndex?.let { idx ->
+                                        coroutineScope.launch { listState.scrollToItem(idx) }
+                                    }
+                                }
+                        )
+                    }
+                }
+            }
+        }
 
-            OptionalAdbPermissionRow(
-                granted = readLogsOk,
-                label = stringResource(R.string.read_logs_label),
-                hint = stringResource(R.string.read_logs_hint),
-                adbCmd = "adb shell pm grant ${context.packageName} android.permission.READ_LOGS",
-                clipboard = clipboard
+        Spacer(Modifier.height(8.dp))
+        Button3D(
+            onClick = {
+                selectedPkg?.let {
+                    CaptureManager.arm(context, it)
+                    onArmed()
+                    val launchIntent = context.packageManager.getLaunchIntentForPackage(it)
+                    if (launchIntent != null) {
+                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        context.startActivity(launchIntent)
+                    } else {
+                        // No launchable activity found for this package -> fall back to the
+                        // system home screen so the user can open it manually themselves.
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(homeIntent)
+                    }
+                }
+            },
+            enabled = allPermsOk && selectedPkg != null,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (!allPermsOk) stringResource(R.string.button_grant_perms_first)
+                else stringResource(R.string.button_start_capture)
             )
-            Spacer(Modifier.height(8.dp))
-            OptionalAdbPermissionRow(
-                granted = dumpOk,
-                label = stringResource(R.string.dump_permission_label),
-                hint = stringResource(R.string.dump_permission_hint),
-                adbCmd = "adb shell pm grant ${context.packageName} android.permission.DUMP",
-                clipboard = clipboard
+        }
+        if (allPermsOk && selectedPkg != null) {
+            Text(
+                stringResource(R.string.start_capture_hint),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp)
             )
-            Button(
-                onClick = {
-                    overlayOk = hasOverlayPermission(context)
-                    usageOk = hasUsageAccess(context)
-                    a11yOk = isAccessibilityServiceEnabled(context)
-                    batteryOptOk = isIgnoringBatteryOptimizations(context)
-                },
-                modifier = Modifier.padding(top = 8.dp)
-            ) { Text(stringResource(R.string.recheck_permissions)) }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -338,130 +441,6 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 }
             )
         }
-
-        Spacer(Modifier.height(16.dp))
-        Divider()
-        Spacer(Modifier.height(8.dp))
-
-        SectionTitle(stringResource(R.string.section_target_app))
-
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text(stringResource(R.string.search_apps_label)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.search_mode_label), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.width(8.dp))
-            FilterChip(
-                selected = !searchByPackage,
-                onClick = { searchByPackage = false },
-                label = { Text(stringResource(R.string.search_by_name)) }
-            )
-            Spacer(Modifier.width(4.dp))
-            FilterChip(
-                selected = searchByPackage,
-                onClick = { searchByPackage = true },
-                label = { Text(stringResource(R.string.search_by_package)) }
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-
-        Row(modifier = Modifier.height(420.dp).fillMaxWidth()) {
-            LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxHeight()) {
-                items(displayedApps) { app ->
-                    ListItem(
-                        leadingContent = { AppIcon(pkg = app.pkg) },
-                        headlineContent = { Text(app.label) },
-                        supportingContent = { Text(app.pkg, style = MaterialTheme.typography.bodySmall) },
-                        trailingContent = {
-                            RadioButton(
-                                selected = selectedPkg == app.pkg,
-                                onClick = { selectedPkg = app.pkg }
-                            )
-                        },
-                        modifier = Modifier.clickable { selectedPkg = app.pkg }
-                    )
-                    Divider()
-                }
-            }
-
-            // A-Z fast-scroll index, shown only while the search box is empty so it can jump
-            // around the full unfiltered list instead of a filtered subset.
-            if (searchQuery.isBlank() && letterIndex.isNotEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .verticalScroll(rememberScrollState())
-                        .padding(start = 2.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    ('A'..'Z').forEach { letter ->
-                        val available = letterIndex.containsKey(letter)
-                        Text(
-                            letter.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (available)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                            modifier = Modifier
-                                .padding(vertical = 1.dp, horizontal = 4.dp)
-                                .clickable {
-                                    val keys = letterIndex.keys.sorted()
-                                    val targetIndex = letterIndex[letter]
-                                        ?: keys.firstOrNull { it >= letter }?.let { letterIndex[it] }
-                                        ?: keys.lastOrNull()?.let { letterIndex[it] }
-                                    targetIndex?.let { idx ->
-                                        coroutineScope.launch { listState.scrollToItem(idx) }
-                                    }
-                                }
-                        )
-                    }
-                }
-            }
-        }
-
-        val allPermsOk = overlayOk && usageOk && a11yOk
-        Spacer(Modifier.height(8.dp))
-        Button(
-            onClick = {
-                selectedPkg?.let {
-                    CaptureManager.arm(context, it)
-                    onArmed()
-                    val launchIntent = context.packageManager.getLaunchIntentForPackage(it)
-                    if (launchIntent != null) {
-                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(launchIntent)
-                    } else {
-                        // No launchable activity found for this package -> fall back to the
-                        // system home screen so the user can open it manually themselves.
-                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                            addCategory(Intent.CATEGORY_HOME)
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(homeIntent)
-                    }
-                }
-            },
-            enabled = allPermsOk && selectedPkg != null,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                if (!allPermsOk) stringResource(R.string.button_grant_perms_first)
-                else stringResource(R.string.button_start_capture)
-            )
-        }
-        if (allPermsOk && selectedPkg != null) {
-            Text(
-                stringResource(R.string.start_capture_hint),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
     }
 }
 
@@ -491,13 +470,16 @@ private fun AppIcon(pkg: String) {
     }
 }
 
+/** The command only ever runs from a PC's own terminal (no way to send it there from the
+ *  phone that's actually useful — package name is fixed, so typing it straight into the PC
+ *  is just as fast as copying), so this shows it as a mock terminal instead of a copy
+ *  button: black screen, green monospace text, exactly like it'll look once typed for real. */
 @Composable
-private fun OptionalAdbPermissionRow(
+fun OptionalAdbPermissionRow(
     granted: Boolean,
     label: String,
     hint: String,
-    adbCmd: String,
-    clipboard: androidx.compose.ui.platform.ClipboardManager
+    adbCmd: String
 ) {
     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         Text(if (granted) "✅" else "⚠️", modifier = Modifier.padding(end = 8.dp))
@@ -509,22 +491,32 @@ private fun OptionalAdbPermissionRow(
         }
     }
     if (!granted) {
-        Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Column(modifier = Modifier.padding(8.dp)) {
-                Text(stringResource(R.string.read_logs_instructions), style = MaterialTheme.typography.bodySmall)
-                SelectionContainer {
-                    Text(adbCmd, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-                }
-                TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(adbCmd)) }) {
-                    Text(stringResource(R.string.copy_command))
-                }
+        Text(
+            stringResource(R.string.read_logs_instructions),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF000000), shape = MaterialTheme.shapes.small)
+                .padding(12.dp)
+        ) {
+            SelectionContainer {
+                Text(
+                    "$ $adbCmd",
+                    color = Color(0xFF33FF33),
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
+        Spacer(Modifier.height(4.dp))
     }
 }
 
 @Composable
-private fun PermissionRow(label: String, granted: Boolean, onClick: () -> Unit) {
+fun PermissionRow(label: String, granted: Boolean, onClick: () -> Unit) {
     Row(
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
@@ -631,6 +623,34 @@ fun LogViewerScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
 
+        // Trying to point a file manager straight at a folder via intent/URI turned out to
+        // crash this EMUI build's Files app outright (bounced to the home screen) even for a
+        // public, SAF-browsable folder — not just our blocked Android/data path. Since we
+        // can't catch or diagnose a crash happening inside another app's process, this no
+        // longer attempts to auto-navigate at all: it copies the log to the public
+        // Download/MoleBug folder (so it's somewhere findable), then just opens the Files
+        // app's own home screen — the one action that can't crash regardless of EMUI quirks —
+        // and tells the user exactly where to tap to find it.
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Box(
+                modifier = Modifier
+                    .clickable {
+                        val copied = CaptureManager.logPath(context)?.let { copyFileToPublicDownloads(context, File(it)) } ?: false
+                        context.packageManager.getLaunchIntentForPackage("com.huawei.filemanager")
+                            ?.let { context.startActivity(it) }
+                        android.widget.Toast.makeText(
+                            context,
+                            if (copied) context.getString(R.string.copied_to_downloads_hint)
+                            else context.getString(R.string.copy_to_downloads_failed),
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+            ) {
+                AppIcon(pkg = "com.huawei.filemanager")
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+
         OutlinedTextField(
             value = logSearchQuery,
             onValueChange = {
@@ -718,7 +738,7 @@ fun LogViewerScreen(onBack: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
-            Button(
+            Button3D(
                 onClick = {
                     val path = CaptureManager.logPath(context)
                     if (path != null) {
@@ -728,9 +748,9 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.button_saved_automatically)) }
             Spacer(Modifier.width(8.dp))
-            Button(
+            Button3D(
                 onClick = {
-                    val zipFile = CaptureManager.zipLogFile(context) ?: return@Button
+                    val zipFile = CaptureManager.zipLogFile(context) ?: return@Button3D
                     val uri = FileProvider.getUriForFile(
                         context, "${context.packageName}.fileprovider", zipFile
                     )

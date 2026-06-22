@@ -19,19 +19,28 @@
     <string name="info_cpu_vendor">CPU vendor</string>
     <string name="info_cpu_freq">CPU max frequency</string>
     <string name="info_cpu_cur_freq">CPU realtime frequency</string>
+    <string name="info_cpu_temp">CPU temperature</string>
+    <string name="cpu_core_label">Core %1$d</string>
+    <string name="cpu_core_max">Max: %1$s</string>
+    <string name="cpu_core_cur">Now: %1$s</string>
 
     <string name="subsection_ram">RAM</string>
     <string name="info_ram_total">RAM total</string>
+    <string name="info_ram_used">RAM used</string>
     <string name="info_ram_type">RAM type</string>
 
     <string name="subsection_gpu">GPU</string>
     <string name="info_gpu_renderer">GPU renderer</string>
+    <string name="info_gpu_freq">GPU frequency</string>
+    <string name="info_gpu_temp">GPU temperature</string>
 
     <string name="subsection_battery">Battery</string>
     <string name="info_battery_percent">Battery percent</string>
     <string name="info_battery_health">Battery health</string>
     <string name="info_battery_status">Battery status</string>
-    <string name="section_check_components">Check Basic Apps</string>
+    <string name="section_check_components">Check Basic Apps for Huawei Device</string>
+    <string name="gms_conflict_warning">⚠️ %1$s is installed — its package conflicts with microG (sign-in loops, silent GMS failures). Uninstall it if microG isn\'t working correctly.</string>
+    <string name="gms_manager_notice">ℹ️ %1$s is installed — just a patching tool, doesn\'t conflict with microG\'s package by itself.</string>
     <string name="button_export_log">Get Installed App List + Save Log</string>
     <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
     <string name="status_log_saved">Log saved: %1$s</string>
@@ -65,8 +74,10 @@
     <string name="read_logs_instructions">Run this command from a PC once (connect via cable or wireless debugging):</string>
     <string name="dump_permission_label">DUMP (get the official OS exit reason — crash/ANR/low-memory/etc. — optional)</string>
     <string name="dump_permission_hint">If you skip this step, you still get logcat-based crash/ANR detection, just not the official OS-reported exit reason</string>
-    <string name="copy_command">Copy Command</string>
     <string name="recheck_permissions">Recheck Permissions</string>
+    <string name="permissions_pill_label_tier2">✅ Permissions granted (Tier 2) — tap to review</string>
+    <string name="permissions_pill_label_tier1">⚠️ Permissions granted (Tier 1 only) — tap to review</string>
+    <string name="permissions_close_button">✕ Close</string>
     <string name="section_capture_options">Capture Options</string>
     <string name="opt_network_timing_label">Network timing log</string>
     <string name="opt_network_timing_hint">Logs elapsed time from foreground to crash/ANR</string>
@@ -77,6 +88,10 @@
     <string name="opt_stall_watchdog_label">Stall watchdog</string>
     <string name="opt_stall_watchdog_hint">Flags a silent stuck app (no crash/ANR/log output at all, e.g. a stuck coroutine) with a memory/network snapshot</string>
     <string name="section_target_app">Target App</string>
+    <string name="tier_badge_2">(Tier 2)</string>
+    <string name="tier_badge_1">(Tier 1)</string>
+    <string name="tier_badge_none">(Permissions needed)</string>
+    <string name="tier_1_missing_hint">Tier 1 only — missing: real logcat stack traces and official process exit reason (crash/ANR/low-memory). Grant READ_LOGS and DUMP via adb on the Home screen for Tier 2.</string>
     <string name="search_apps_label">Search apps</string>
     <string name="search_mode_label">Search by:</string>
     <string name="search_by_name">App name</string>
@@ -99,8 +114,11 @@
     <string name="log_search_previous">↑ Prev</string>
     <string name="log_search_next">↓ Next</string>
     <string name="log_scroll_position">Line %1$d of %2$d (%3$d%%)</string>
-    <string name="button_saved_automatically">Saved Automatically</string>
+    <string name="button_saved_automatically">Saved</string>
     <string name="button_share_file">Share File</string>
+    <string name="no_file_explorer_found">Files app not found on this device</string>
+    <string name="copy_to_downloads_failed">Couldn\'t copy the log to Download/MoleBug — opening Files app anyway</string>
+    <string name="copied_to_downloads_hint">Log copied — open Files app and go to Download/MoleBug</string>
     <string name="share_chooser_title">Share log file</string>
 
     <!-- Capture notification -->

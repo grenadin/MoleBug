@@ -50,6 +50,7 @@ class CaptureService : Service() {
     private var logcatProcess: Process? = null
     private var systemWatcherProcess: Process? = null
     private var lmkWatcherProcess: Process? = null
+    private var gmsWatcherProcess: Process? = null
     private var eventsWatcherProcess: Process? = null
     private var currentPid = -1
     private val memoryHandler = Handler(Looper.getMainLooper())
@@ -101,6 +102,7 @@ class CaptureService : Service() {
         dumpLogcatBacklog(pkg)
         startSystemBufferWatcher(pkg)
         startLmkWatcher(pkg)
+        startGmsErrorWatcher(pkg)
         startMemoryPolling()
         if (eventsBufferEnabled) startEventsWatcher(pkg)
         if (stallWatchdogEnabled) startStallWatchdog(pkg)
@@ -137,6 +139,27 @@ class CaptureService : Service() {
 
     private val anrKeywords = listOf("ANR in", "Input dispatching timed out", "Reason: Input dispatching timed out")
 
+    /** Tags/phrases that flag a "black screen" style failure — the process is alive, no
+     *  exception, no ANR, but rendering/playback has silently stalled (the YouTube
+     *  black-screen case). These come from the app's own pid since Choreographer,
+     *  OpenGLRenderer, and the media stack all run in-process. */
+    private val renderStallKeywords = listOf(
+        "Choreographer", "OpenGLRenderer", "MediaCodec", "NuPlayer", "ExoPlayer",
+        "Surface::dequeueBuffer", "BufferQueue", "eglSwapBuffers"
+    )
+    private fun looksLikeRenderStall(line: String): Boolean =
+        renderStallKeywords.any { line.contains(it) } &&
+            (line.contains("Skipped", ignoreCase = true) || line.contains("error", ignoreCase = true) ||
+                line.contains("timeout", ignoreCase = true) || line.contains("fail", ignoreCase = true))
+
+    /** GMS/microG call failures — the most common reason a microG device shows "couldn't sign
+     *  in"/"X isn't available" style errors that aren't a crash or ANR at all, just a failed
+     *  Google Play Services API call silently swallowed by the app. */
+    private val gmsErrorKeywords = listOf(
+        "GoogleApiAvailability", "ConnectionResult", "SecurityException: Unknown calling package",
+        "DeadObjectException", "ApiException", "SERVICE_VERSION_UPDATE_REQUIRED", "SIGN_IN_REQUIRED"
+    )
+
     /** Streams one `logcat --pid=PID` session on a background reader until it ends or is destroyed.
      *  Pulls from main + crash buffers — crash carries Android's own concise crash summary,
      *  not just whatever the app itself printed to the main buffer. */
@@ -160,6 +183,14 @@ class CaptureService : Service() {
                             logNetworkSocketSnapshotIfPossible()
                             logPowerStateSnapshot()
                             logTimingIfEnabled()
+                        }
+                        if (line.contains("Fatal signal") || line.contains("tombstoned")) {
+                            CaptureManager.appendLog(applicationContext, "[LOGCAT-NATIVE-CRASH] Found a native crash signal (not a Java exception) — likely a crash inside a native (.so) library, see line above")
+                            logPowerStateSnapshot()
+                        }
+                        if (looksLikeRenderStall(line)) {
+                            CaptureManager.appendLog(applicationContext, "[RENDER-STALL] $line")
+                            CaptureManager.appendLog(applicationContext, "[RENDER-STALL] Process is alive but rendering/playback looks stuck (black-screen style failure) — see line above")
                         }
                     }
                 } catch (e: Exception) {
@@ -236,8 +267,16 @@ class CaptureService : Service() {
 
     /** Low-memory-killer terminations show up in the kernel log buffer, not main/system/crash,
      *  and (like ANR) are not attributed to the target app's own pid. Tail it unfiltered for
-     *  the whole session so a background OOM-kill isn't mistaken for a crash. */
+     *  the whole session so a background OOM-kill isn't mistaken for a crash. Also watches the
+     *  same kernel buffer for SELinux denials ("avc: denied") naming the target's uid — a
+     *  common, otherwise-invisible reason a permission "looks granted" but a call still fails
+     *  (frequent on microG/GMS calls), since denials never show up in main/crash/system. */
     private fun startLmkWatcher(pkg: String) {
+        val uid = try {
+            packageManager.getApplicationInfo(pkg, 0).uid
+        } catch (e: Exception) {
+            -1
+        }
         try {
             val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "threadtime", "-b", "kernel"))
             lmkWatcherProcess = process
@@ -249,6 +288,10 @@ class CaptureService : Service() {
                             CaptureManager.appendLog(applicationContext, "[LMK] $line")
                             CaptureManager.appendLog(applicationContext, "[LMK] The system's low-memory killer terminated $pkg — likely an OOM kill, not a crash")
                         }
+                        if (uid != -1 && line.contains("avc: denied") && line.contains("uid=$uid")) {
+                            CaptureManager.appendLog(applicationContext, "[SELINUX] $line")
+                            CaptureManager.appendLog(applicationContext, "[SELINUX] SELinux denied an action for $pkg (uid=$uid) — likely cause of a permission that 'looks granted' but silently fails")
+                        }
                     }
                 } catch (e: Exception) {
                     // process destroyed/pipe closed — normal on stop
@@ -256,6 +299,34 @@ class CaptureService : Service() {
             }.apply { isDaemon = true }.start()
         } catch (e: Exception) {
             CaptureManager.appendLog(applicationContext, "[LMK] Failed to start low-memory-killer watcher: ${e.message}")
+        }
+    }
+
+    /** Watches the unfiltered `main` buffer for GMS/microG API failures (sign-in errors, missing
+     *  Play Services version, dead-object binder calls, etc.) — these are logged by Play
+     *  Services / microG's own process, not the target's pid, and are the most common
+     *  microG-specific failure mode that looks fine to the user but isn't a crash or ANR at
+     *  all. Only flagged when the same line also mentions the target package, to avoid
+     *  flooding the log with unrelated GMS chatter from other apps. */
+    private fun startGmsErrorWatcher(pkg: String) {
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "threadtime", "-b", "main"))
+            gmsWatcherProcess = process
+            Thread {
+                try {
+                    process.inputStream.bufferedReader().forEachLine { line ->
+                        if (!logcatRunning) return@forEachLine
+                        if (line.contains(pkg, ignoreCase = true) && gmsErrorKeywords.any { line.contains(it) }) {
+                            CaptureManager.appendLog(applicationContext, "[GMS-ERROR] $line")
+                            CaptureManager.appendLog(applicationContext, "[GMS-ERROR] A Google Play Services / microG call failed for $pkg — common cause of 'sign-in failed'/feature-unavailable errors that aren't a crash")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // process destroyed/pipe closed — normal on stop
+                }
+            }.apply { isDaemon = true }.start()
+        } catch (e: Exception) {
+            CaptureManager.appendLog(applicationContext, "[GMS-ERROR] Failed to start GMS error watcher: ${e.message}")
         }
     }
 
@@ -514,6 +585,8 @@ class CaptureService : Service() {
         systemWatcherProcess = null
         lmkWatcherProcess?.destroy()
         lmkWatcherProcess = null
+        gmsWatcherProcess?.destroy()
+        gmsWatcherProcess = null
         eventsWatcherProcess?.destroy()
         eventsWatcherProcess = null
         memoryHandler.removeCallbacksAndMessages(null)

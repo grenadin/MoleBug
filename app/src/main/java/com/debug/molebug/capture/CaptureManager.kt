@@ -42,10 +42,51 @@ object CaptureManager {
             .putInt(KEY_CRASH_COUNT, 0)
             .apply()
         val deviceInfo = DeviceInspector.getDeviceInfo(context)
+        val targetAppInfo = try {
+            DeviceInspector.getTargetAppInfo(context, targetPackage)
+        } catch (e: Exception) {
+            null
+        }
+        // "Can't launch at all" is often the app sitting in the system's force-stopped state
+        // (user/system force-stopped it, or a fresh install never opened yet) rather than a
+        // crash — surfaced here since it's only knowable right before launch, not mid-capture.
+        val isForceStopped = try {
+            (context.packageManager.getApplicationInfo(targetPackage, 0).flags and
+                android.content.pm.ApplicationInfo.FLAG_STOPPED) != 0
+        } catch (e: Exception) {
+            null
+        }
+        // Low internal storage is a common silent cause of "won't launch"/"won't install
+        // update" failures that look identical to a crash from the user's side.
+        val freeStorageMb = try {
+            android.os.StatFs(context.filesDir.path).availableBytes / (1024 * 1024)
+        } catch (e: Exception) {
+            null
+        }
         val header = buildString {
             appendLine("===== MoleBug Capture Log =====")
             appendLine("Target package: $targetPackage")
             appendLine("Armed at: $ts")
+            appendLine()
+            appendLine("---- Target App Info ----")
+            if (targetAppInfo != null) {
+                appendLine("Version: ${targetAppInfo.versionName} (code ${targetAppInfo.versionCode})")
+                appendLine("Installed from: ${targetAppInfo.installer}")
+                appendLine("Installed at: ${targetAppInfo.installedAt}")
+                appendLine("Data used since install: ${targetAppInfo.dataUsageSinceInstall}")
+                appendLine("Notifications: ${targetAppInfo.notificationStatus}")
+                appendLine("APK MD5: ${targetAppInfo.apkMd5}")
+                appendLine("APK SHA-1: ${targetAppInfo.apkSha1}")
+                appendLine("APK SHA-256: ${targetAppInfo.apkSha256}")
+                appendLine("Requested permissions (${targetAppInfo.requestedPermissions.size}):")
+                targetAppInfo.requestedPermissions.forEach { (name, granted) ->
+                    appendLine("  [${if (granted) "GRANTED" else "DENIED"}] $name")
+                }
+            } else {
+                appendLine("unavailable: could not read target app info")
+            }
+            appendLine("Force-stopped state: ${isForceStopped?.let { if (it) "STOPPED (won't auto-launch from background until user opens it manually)" else "Not stopped" } ?: "unavailable"}")
+            appendLine("Free internal storage at arm time: ${freeStorageMb?.let { "$it MB" } ?: "unavailable"}")
             appendLine()
             appendLine("---- Device Info ----")
             appendLine("[Device]")
@@ -60,11 +101,18 @@ object CaptureManager {
             appendLine("CPU vendor: ${deviceInfo.cpuVendor}")
             appendLine("CPU max frequency: ${deviceInfo.cpuMaxFreqMHz}")
             appendLine("CPU realtime frequency: ${deviceInfo.cpuCurFreqMHz}")
+            appendLine("CPU temperature: ${deviceInfo.cpuTempC}")
+            deviceInfo.cpuCoreFreqs.forEach { core ->
+                appendLine("  Core ${core.coreIndex}: max ${core.maxFreqMHz}, now ${core.curFreqMHz}")
+            }
             appendLine("[RAM]")
             appendLine("RAM total: ${deviceInfo.ramTotal}")
+            appendLine("RAM used: ${deviceInfo.ramUsed}")
             appendLine("RAM type: ${deviceInfo.ramType}")
             appendLine("[GPU]")
             appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
+            appendLine("GPU frequency: ${deviceInfo.gpuFreqMHz}")
+            appendLine("GPU temperature: ${deviceInfo.gpuTempC}")
             appendLine("[Battery]")
             appendLine("Battery percent: ${deviceInfo.batteryPercent}")
             appendLine("Battery health: ${deviceInfo.batteryHealth}")

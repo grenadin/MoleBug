@@ -14,7 +14,12 @@
     <string name="info_cpu_cores">7. จำนวน CPU core</string>
     <string name="info_cpu_freq">8. ความเร็ว CPU สูงสุด</string>
     <string name="info_gpu_renderer">9. GPU Renderer</string>
-    <string name="section_check_components">ตรวจสอบแอปพื้นฐาน</string>
+    <string name="cpu_core_label">คอร์ %1$d</string>
+    <string name="cpu_core_max">สูงสุด: %1$s</string>
+    <string name="cpu_core_cur">ปัจจุบัน: %1$s</string>
+    <string name="section_check_components">ตรวจสอบแอปพื้นฐานสำหรับเครื่อง Huawei</string>
+    <string name="gms_conflict_warning">⚠️ พบแอป %1$s ติดตั้งอยู่ — package ของแอปนี้ขัดแย้งกับ microG (sign-in วนลูป, GMS ทำงานผิดพลาดแบบไม่มีสาเหตุ) แนะนำให้ถอนการติดตั้งถ้า microG ทำงานไม่ถูกต้อง</string>
+    <string name="gms_manager_notice">ℹ️ พบแอป %1$s ติดตั้งอยู่ — เป็นแค่เครื่องมือ patch ไฟล์ ไม่ขัดแย้งกับ package ของ microG โดยตรง</string>
     <string name="button_export_log">ดึงรายการแอปที่ติดตั้ง + บันทึก Log</string>
     <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
     <string name="status_log_saved">บันทึก log สำเร็จ: %1$s</string>
@@ -48,7 +53,6 @@
     <string name="read_logs_instructions">รันคำสั่งนี้จาก PC ครั้งเดียว (ต่อ adb ผ่านสายหรือ wireless debugging):</string>
     <string name="dump_permission_label">DUMP (ได้เหตุผลที่แอปถูกปิดจากระบบจริง — crash/ANR/low-memory/ฯลฯ — ไม่บังคับ)</string>
     <string name="dump_permission_hint">ถ้าไม่ทำขั้นนี้ ก็ยังตรวจ crash/ANR จาก logcat ได้เหมือนเดิม แค่ไม่ได้เหตุผลที่ระบบรายงานเองมาด้วย</string>
-    <string name="copy_command">คัดลอกคำสั่ง</string>
     <string name="recheck_permissions">รีเช็คสิทธิ์</string>
     <string name="section_capture_options">ตัวเลือกการจับ Log</string>
     <string name="opt_network_timing_label">บันทึกเวลา network</string>
@@ -82,8 +86,11 @@
     <string name="log_search_previous">↑ ก่อนหน้า</string>
     <string name="log_search_next">↓ ถัดไป</string>
     <string name="log_scroll_position">บรรทัด %1$d จาก %2$d (%3$d%%)</string>
-    <string name="button_saved_automatically">บันทึกแล้วอัตโนมัติ</string>
+    <string name="button_saved_automatically">บันทึกแล้ว</string>
     <string name="button_share_file">ส่งไฟล์ (แชร์)</string>
+    <string name="no_file_explorer_found">ไม่พบแอป Files บนเครื่องนี้</string>
+    <string name="copy_to_downloads_failed">คัดลอก log ไป Download/MoleBug ไม่สำเร็จ — เปิดแอป Files ให้แทน</string>
+    <string name="copied_to_downloads_hint">คัดลอก log แล้ว — เปิดแอป Files แล้วไปที่ Download/MoleBug</string>
     <string name="share_chooser_title">ส่งไฟล์ log</string>
 
     <!-- Capture notification -->
