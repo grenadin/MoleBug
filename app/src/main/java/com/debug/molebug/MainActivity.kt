@@ -1129,7 +1129,16 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                                 context, "${context.packageName}.fileprovider", file
                             )
                             val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
+                                // "text/plain" here was getting misread by some share targets
+                                // (confirmed via logcat: Messenger's ShareIntentHandler calls
+                                // finish() on itself immediately, with no UI, the instant it
+                                // sees text/plain + EXTRA_STREAM together — it reads that mime
+                                // as "this is text for the compose box", not "this is a file",
+                                // and bails when a stream shows up instead). "*/*" reads
+                                // unambiguously as "generic file attachment" everywhere,
+                                // matching the capture-log Share button (application/zip) that
+                                // never had this problem.
+                                type = "*/*"
                                 putExtra(Intent.EXTRA_STREAM, uri)
                                 // Pre-fills a prompt alongside the file for share targets that
                                 // read EXTRA_TEXT even with a stream attached (most chat-style
@@ -1331,6 +1340,12 @@ private fun PermissionsWidget(
                         .verticalScroll(scrollState)
                         .padding(end = 12.dp)
                 ) {
+                    Text(
+                        stringResource(R.string.permissions_tier1_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFF3A3000),
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
                     PermissionRow(
                         label = stringResource(R.string.perm_overlay), granted = overlayOk,
                         onClick = {
@@ -1369,6 +1384,13 @@ private fun PermissionsWidget(
                         )
                     }
 
+                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        stringResource(R.string.permissions_tier2_label),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFF3A3000),
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
                     OptionalAdbPermissionRow(
                         granted = readLogsOk,
                         label = stringResource(R.string.read_logs_label),

@@ -42,6 +42,8 @@
     <string name="back_button">← กลับ</string>
     <string name="target_picker_title">เลือกแอปเป้าหมาย</string>
     <string name="section_permissions_needed">สิทธิ์ที่ต้องเปิดก่อน (ทำครั้งเดียว)</string>
+    <string name="permissions_tier1_label">Tier 1 (จำเป็น)</string>
+    <string name="permissions_tier2_label">Tier 2 (ทางเลือก)</string>
     <string name="perm_overlay">Overlay (แสดงป้ายแดงกระพริบ)</string>
     <string name="perm_usage_access">Usage Access (ดูจังหวะ foreground/background)</string>
     <string name="perm_accessibility">Accessibility Service (ตรวจจับ dialog หยุดทำงาน)</string>

@@ -62,7 +62,7 @@
     <!-- Target picker screen -->
     <string name="back_button">← Back</string>
     <string name="target_picker_title">Select Target App</string>
-    <string name="section_permissions_needed">Permissions Needed (one-time setup)</string>
+    <string name="section_permissions_needed">Permission Required (one-time setup)</string>
     <string name="perm_overlay">Overlay (show blinking red badge)</string>
     <string name="perm_usage_access">Usage Access (see foreground/background timing)</string>
     <string name="perm_accessibility">Accessibility Service (detect crash dialog)</string>
@@ -90,6 +90,8 @@
     <string name="section_target_app">Target App</string>
     <string name="tier_badge_2">(Tier 2)</string>
     <string name="tier_badge_1">(Tier 1)</string>
+    <string name="permissions_tier1_label">Tier 1 (required)</string>
+    <string name="permissions_tier2_label">Tier 2 (optional)</string>
     <string name="tier_badge_none">(Permissions needed)</string>
     <string name="tier_1_missing_hint">Tier 1 only — missing: real logcat stack traces and official process exit reason (crash/ANR/low-memory). Grant READ_LOGS and DUMP via adb on the Home screen for Tier 2.</string>
     <string name="search_apps_label">Search apps</string>
