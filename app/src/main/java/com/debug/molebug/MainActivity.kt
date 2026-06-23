@@ -9,14 +9,17 @@ import android.content.IntentFilter
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.Settings
 import com.debug.molebug.capture.CaptureManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,12 +37,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -52,7 +59,8 @@ data class CheckedApp(
     val installed: Boolean,
     val versionName: String?,
     val versionCode: Long?,
-    val installer: String?
+    val installer: String?,
+    val isSystemApp: Boolean? = null
 )
 
 data class CpuCoreFreq(
@@ -72,7 +80,6 @@ data class DeviceInfo(
     val cpuMaxFreqMHz: String,
     val gpuRenderer: String,
     val ramTotal: String,
-    val ramType: String,
     val ramUsed: String,
     val cpuVendor: String,
     val cpuCurFreqMHz: String,
@@ -92,7 +99,21 @@ data class LiveDeviceStats(
     val cpuTempC: String,
     val gpuFreqMHz: String,
     val gpuTempC: String,
-    val ramUsed: String
+    val ramUsed: String,
+    val batteryPercent: String,
+    val batteryStatus: String
+)
+
+/** Bundles a store's installer-scan state (Aurora/GBox/microG Companion) with its setters so
+ *  the per-row scan logic in MoleBugApp can stay store-agnostic instead of branching by
+ *  package name at every step. */
+data class ScanTarget(
+    val result: List<CheckedApp>?,
+    val inProgress: Boolean,
+    val setResult: (List<CheckedApp>?) -> Unit,
+    val setInProgress: (Boolean) -> Unit,
+    val ascending: Boolean,
+    val setAscending: (Boolean) -> Unit
 )
 
 data class TargetAppInfo(
@@ -125,7 +146,6 @@ object DeviceInspector {
             cpuMaxFreqMHz = readCpuMaxFreqMHz(),
             gpuRenderer = readGpuRenderer(),
             ramTotal = readRamTotal(context),
-            ramType = readRamType(),
             ramUsed = readRamUsed(context),
             cpuVendor = readCpuVendor(),
             cpuCurFreqMHz = readCpuCurFreqMHz(),
@@ -146,7 +166,12 @@ object DeviceInspector {
         cpuTempC = readCpuTempC(),
         gpuFreqMHz = readGpuFreqMHz(),
         gpuTempC = readGpuTempC(),
-        ramUsed = readRamUsed(context)
+        ramUsed = readRamUsed(context),
+        // Percent/charging-status change while the screen is open (e.g. plugging in mid-view),
+        // unlike the rest of DeviceInfo which is a one-time snapshot — same reasoning as RAM
+        // used / CPU temp above.
+        batteryPercent = readBatteryPercent(context),
+        batteryStatus = readBatteryStatus(context)
     )
 
     /** Total physical RAM via ActivityManager.MemoryInfo — the only RAM size source that
@@ -175,20 +200,6 @@ object DeviceInspector {
         }
     }
 
-    /** RAM chip type (e.g. LPDDR4X) isn't exposed by any public Android API; only some vendors
-     *  leak it through a boot system property. Best-effort across the property names seen on
-     *  real devices, otherwise honestly report it as unavailable. */
-    private fun readRamType(): String {
-        val candidates = listOf(
-            "ro.boot.ddr_type", "ro.boot.hardware.ddr", "ro.boot.ddr_vendor",
-            "ro.boot.ram_type", "ro.product.ram_type"
-        )
-        for (key in candidates) {
-            val v = getProp(key)
-            if (v.isNotEmpty()) return v
-        }
-        return "Unknown (not exposed by Android API on this device)"
-    }
 
     /** CPU manufacturer. Build.SOC_MANUFACTURER (API 31+) is the official field; older devices
      *  fall back to the "Hardware"/"vendor_id" line in /proc/cpuinfo, then Build.HARDWARE. */
@@ -278,7 +289,12 @@ object DeviceInspector {
             "/sys/class/kgsl/kgsl-3d0/devfreq/cur_freq", // Adreno (Qualcomm)
             "/sys/class/kgsl/kgsl-3d0/gpuclk",
             "/sys/kernel/gpu/gpu_clock", // some Mali ROMs
-            "/sys/kernel/ged/hal/current_freqency" // MediaTek (typo is intentional upstream)
+            "/sys/kernel/ged/hal/current_freqency", // MediaTek (typo is intentional upstream)
+            // Kirin (HiSilicon) — confirmed readable directly via adb run-as on a Mate X6 even
+            // though the app can't list /sys/class/devfreq itself (SELinux denies the directory
+            // listing, not the file read), which is why the generic devfreq scan below never
+            // reaches this node on this SoC.
+            "/sys/class/devfreq/gpufreq/cur_freq"
         )
         for (path in candidates) {
             try {
@@ -290,13 +306,22 @@ object DeviceInspector {
             }
         }
         val gpuKeywords = listOf("gpu", "kgsl", "mali", "adreno")
+        val seenNodeNames = mutableListOf<String>()
         try {
             val devfreqDir = File("/sys/class/devfreq")
             val nodes = devfreqDir.listFiles() ?: emptyArray()
             for (node in nodes) {
                 try {
-                    val name = (File(node, "name").takeIf { it.exists() }?.readText()?.trim() ?: node.name)
-                        .lowercase()
+                    // The "name" file can exist but still be unreadable (SELinux-denied on some
+                    // ROMs, confirmed on this device's "gpufreq" node) — that must fall back to
+                    // the directory name like the missing-file case, not abort this node
+                    // entirely the way a shared try/catch around both reads would.
+                    val name = try {
+                        File(node, "name").takeIf { it.exists() }?.readText()?.trim() ?: node.name
+                    } catch (e: Exception) {
+                        node.name
+                    }.lowercase()
+                    seenNodeNames += name
                     if (gpuKeywords.none { name.contains(it) }) continue
                     val hz = File(node, "cur_freq").takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull()
                         ?: continue
@@ -308,7 +333,13 @@ object DeviceInspector {
         } catch (e: Exception) {
             // /sys/class/devfreq itself unreadable — fall through to the generic message below
         }
-        return "unavailable (not exposed on this device)"
+        // Same idea as the thermal-zone fallback: list what was actually found on this device
+        // so a future keyword/path can be added precisely instead of guessing blind.
+        return if (seenNodeNames.isEmpty()) {
+            "unavailable (not exposed on this device)"
+        } else {
+            "unavailable (devfreq nodes on this device: ${seenNodeNames.distinct().joinToString(", ")})"
+        }
     }
 
     /** Per-core max/current frequency, one entry per CPU core index, so the UI can show each
@@ -451,6 +482,12 @@ object DeviceInspector {
         }
     }
 
+    /** True if this package is a pre-installed system app (ships with the ROM/firmware, in
+     *  /system or /vendor) rather than something the user installed themselves — checked via
+     *  the standard ApplicationInfo.FLAG_SYSTEM bit, the same flag `pm list packages -s` uses. */
+    private fun isSystemApp(info: PackageInfo): Boolean =
+        (info.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0
+
     fun checkApp(context: Context, label: String, pkg: String): CheckedApp {
         val pm = context.packageManager
         return try {
@@ -463,7 +500,8 @@ object DeviceInspector {
                 versionName = info.versionName,
                 versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                     info.longVersionCode else info.versionCode.toLong(),
-                installer = installer
+                installer = installer,
+                isSystemApp = isSystemApp(info)
             )
         } catch (e: PackageManager.NameNotFoundException) {
             CheckedApp(label, pkg, installed = false, versionName = null, versionCode = null, installer = null)
@@ -610,10 +648,50 @@ object DeviceInspector {
                 versionName = it.versionName,
                 versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
                     it.longVersionCode else it.versionCode.toLong(),
-                installer = getInstallerName(context, pm, it.packageName)
+                installer = getInstallerName(context, pm, it.packageName),
+                isSystemApp = isSystemApp(it)
             )
         }.sortedBy { it.pkg }
     }
+
+    /** Scans every installed app's installer source for one specific package — shared by the
+     *  GBox and Aurora Store "what did this store actually install" lookups, since both rely
+     *  on the same getInstallSourceInfo() mechanism. Always call this from a background
+     *  dispatcher (Dispatchers.Default); it does one IPC call per installed app. */
+    suspend fun listAppsInstalledVia(context: Context, installerPkg: String): List<CheckedApp> =
+        listAppsInstalledVia(context, setOf(installerPkg))
+
+    /** Accepts a set of acceptable installer package names — most callers pass a single
+     *  package, but this stays a set in case a future store has more than one legitimate
+     *  installer attribution (confirmed via Aurora Store's own source that this can genuinely
+     *  vary by install mode, not by guessing). */
+    suspend fun listAppsInstalledVia(context: Context, installerPkgs: Set<String>): List<CheckedApp> =
+        withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val pm = context.packageManager
+            pm.getInstalledPackages(0).mapNotNull { pi ->
+                val installer = try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val src = pm.getInstallSourceInfo(pi.packageName)
+                        src.installingPackageName ?: src.initiatingPackageName
+                    } else {
+                        @Suppress("DEPRECATION") pm.getInstallerPackageName(pi.packageName)
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+                if (installer !in installerPkgs) return@mapNotNull null
+                CheckedApp(
+                    label = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pi.packageName,
+                    pkg = pi.packageName,
+                    installed = true,
+                    versionName = pi.versionName,
+                    versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                        pi.longVersionCode else pi.versionCode.toLong(),
+                    installer = installer,
+                    isSystemApp = isSystemApp(pi)
+                )
+            }
+        }
 
     fun exportLog(context: Context, deviceInfo: DeviceInfo, checks: List<CheckedApp>, allApps: List<CheckedApp>): File {
         val dir = File(context.getExternalFilesDir(null), "logs")
@@ -645,7 +723,6 @@ object DeviceInspector {
         sb.appendLine("[RAM]")
         sb.appendLine("RAM total: ${deviceInfo.ramTotal}")
         sb.appendLine("RAM used: ${deviceInfo.ramUsed}")
-        sb.appendLine("RAM type: ${deviceInfo.ramType}")
         sb.appendLine("[GPU]")
         sb.appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
         sb.appendLine("GPU frequency: ${deviceInfo.gpuFreqMHz}")
@@ -680,7 +757,9 @@ val REQUIRED_COMPONENTS = listOf(
     Triple("microG Services", "com.google.android.gms", "เวอร์ชันของ microG Services"),
     Triple("microG Services Framework Proxy", "com.google.android.gsf", "เวอร์ชันของ Framework Proxy"),
     Triple("microG Companion", "com.android.vending", "เวอร์ชันของ microG companion"),
-    Triple("Aurora Store", "com.aurora.store", "เวอร์ชันของ Aurora")
+    Triple("Aurora Store", "com.aurora.store", "เวอร์ชันของ Aurora"),
+    Triple("GBox", "com.gbox.android", "เวอร์ชันของ GBox"),
+    Triple("AppGallery", "com.huawei.appmarket", "เวอร์ชันของ AppGallery")
 )
 
 /** ReVanced/Vanced's own bundled GmsCore implementations declare the same package name and
@@ -736,7 +815,9 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 cpuTempC = deviceInfo.cpuTempC,
                 gpuFreqMHz = deviceInfo.gpuFreqMHz,
                 gpuTempC = deviceInfo.gpuTempC,
-                ramUsed = deviceInfo.ramUsed
+                ramUsed = deviceInfo.ramUsed,
+                batteryPercent = deviceInfo.batteryPercent,
+                batteryStatus = deviceInfo.batteryStatus
             )
         )
     }
@@ -751,16 +832,37 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     }
     var statusMsg by remember { mutableStateOf<String?>(null) }
     var exportedPath by remember { mutableStateOf<String?>(null) }
+    // GBox's "Install to device" feature performs a real, normal package install (not just
+    // virtualization) — the resulting app is a genuine installed package, so it's detectable
+    // the same way Aurora Store/Play Store installs are: via getInstallSourceInfo(). Scanning
+    // every installed app for this is on-demand (button tap) rather than automatic on screen
+    // load, since checking the installer of every app is the same per-app IPC cost that made
+    // the Target Picker slow before it was optimized away there.
+    var gboxScanInProgress by remember { mutableStateOf(false) }
+    var gboxScanResult by remember { mutableStateOf<List<CheckedApp>?>(null) }
+    var gboxSortAscending by remember { mutableStateOf(true) }
+    var auroraScanInProgress by remember { mutableStateOf(false) }
+    var auroraScanResult by remember { mutableStateOf<List<CheckedApp>?>(null) }
+    var auroraSortAscending by remember { mutableStateOf(true) }
+    var vendingScanInProgress by remember { mutableStateOf(false) }
+    var vendingScanResult by remember { mutableStateOf<List<CheckedApp>?>(null) }
+    var vendingSortAscending by remember { mutableStateOf(true) }
+    var appgalleryScanInProgress by remember { mutableStateOf(false) }
+    var appgalleryScanResult by remember { mutableStateOf<List<CheckedApp>?>(null) }
+    var appgallerySortAscending by remember { mutableStateOf(true) }
+    val scanScope = rememberCoroutineScope()
+    // Only one store's result card should be open at a time — tapping a different store's box
+    // closes whatever was already showing, instead of stacking multiple results cards.
+    fun closeOtherScanResults(except: String) {
+        if (except != "com.gbox.android") gboxScanResult = null
+        if (except != "com.aurora.store") auroraScanResult = null
+        if (except != "com.android.vending") vendingScanResult = null
+        if (except != "com.huawei.appmarket") appgalleryScanResult = null
+    }
     var exportedContent by remember { mutableStateOf<String?>(null) }
 
-    // The Device Info card auto-collapses to just its title once the page is scrolled past
-    // the card's own height, then expands again on scroll-back-to-top — same pattern as the
-    // Target Picker's Permissions/Capture Options sections, so the card doesn't eat the whole
-    // screen while the user is trying to get to Check Basic Apps / Export below it. Gating on
-    // the card's measured height (rather than any scroll > 0) lets the user scroll through the
-    // card's own content — e.g. down to GPU/Battery below the CPU core cards — without it
-    // collapsing out from under them mid-scroll.
     var deviceInfoExpanded by remember { mutableStateOf(false) }
+    var checksExpanded by remember { mutableStateOf(false) }
     // Each category inside the card (Device/CPU/RAM/GPU/Battery) collapses independently,
     // since showing all five at once was taking up a lot of the card's space.
     var deviceSubExpanded by remember { mutableStateOf(true) }
@@ -774,20 +876,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
             kotlinx.coroutines.delay(1000)
         }
     }
-    var deviceCardHeightPx by remember { mutableStateOf(0) }
     val pageScrollState = rememberScrollState()
-    var hasScrolledAway by remember { mutableStateOf(false) }
-    LaunchedEffect(pageScrollState) {
-        snapshotFlow { pageScrollState.value }.collect { value ->
-            if (deviceInfoExpanded && value > deviceCardHeightPx) {
-                hasScrolledAway = true
-                deviceInfoExpanded = false
-            } else if (!deviceInfoExpanded && hasScrolledAway && value == 0) {
-                deviceInfoExpanded = true
-                hasScrolledAway = false
-            }
-        }
-    }
 
     // Permissions live on the Home screen now, as a modal-style card pinned to the bottom of
     // the screen instead of taking up space inline in the Target Picker — that screen's job is
@@ -809,16 +898,6 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     var permissionsExpanded by remember { mutableStateOf(false) }
     LaunchedEffect(tier1Complete) {
         if (tier1Complete) permissionsExpanded = false
-    }
-
-    // The permissions widget pops in over the screen a few seconds after launch, instead of
-    // being there on the very first frame — so the user sees the normal Device Info / Basic
-    // Apps content first, then the modal animates in on top of it.
-    var permissionsWidgetVisible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(2000)
-        permissionsWidgetVisible = true
-        permissionsExpanded = !tier1Complete
     }
 
     // Once every permission (Tier 2 included) is granted and the widget is collapsed, there's
@@ -847,6 +926,15 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
+            // Default Material ripple is a faint gray — barely visible on the small icon/button
+            // tap targets in this screen. A bolder, theme-primary-colored ripple here matches
+            // the visibly-spreading tap effect already used on the Target Picker's RPG scroll.
+            CompositionLocalProvider(
+                LocalIndication provides androidx.compose.material.ripple.rememberRipple(
+                    color = MaterialTheme.colorScheme.primary,
+                    bounded = true
+                )
+            ) {
             Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
@@ -874,21 +962,28 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
 
                 GlassyCard(
                     color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { deviceCardHeightPx = it.size.height }
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { deviceInfoExpanded = !deviceInfoExpanded }
+                                .padding(vertical = 12.dp)
                         ) {
                             Text(
                                 stringResource(R.string.section_device_info),
                                 style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.weight(1f)
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                color = Color.Black,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(
+                                        Color(0xFFBAB2DD),
+                                        androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
                             )
                             Text(
                                 if (deviceInfoExpanded) "▾" else "▸",
@@ -897,6 +992,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         }
 
                         if (deviceInfoExpanded) {
+                        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                             CollapsibleSubsectionLabel(
                                 stringResource(R.string.subsection_device),
                                 expanded = deviceSubExpanded,
@@ -941,7 +1037,6 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             if (ramSubExpanded) {
                                 InfoRow(stringResource(R.string.info_ram_total), deviceInfo.ramTotal)
                                 InfoRow(stringResource(R.string.info_ram_used), liveStats.ramUsed)
-                                InfoRow(stringResource(R.string.info_ram_type), deviceInfo.ramType)
                             }
 
                             Divider(modifier = Modifier.padding(vertical = 6.dp))
@@ -963,18 +1058,96 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                                 onToggle = { batterySubExpanded = !batterySubExpanded }
                             )
                             if (batterySubExpanded) {
-                                InfoRow(stringResource(R.string.info_battery_percent), deviceInfo.batteryPercent)
+                                InfoRow(stringResource(R.string.info_battery_percent), liveStats.batteryPercent)
                                 InfoRow(stringResource(R.string.info_battery_health), deviceInfo.batteryHealth)
-                                InfoRow(stringResource(R.string.info_battery_status), deviceInfo.batteryStatus)
+                                InfoRow(stringResource(R.string.info_battery_status), liveStats.batteryStatus)
                             }
+                        }
                         }
                     }
                 }
 
                 Spacer(Modifier.height(16.dp))
-                SectionTitle(stringResource(R.string.section_check_components))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { checksExpanded = !checksExpanded }
+                ) {
+                    Text(
+                        stringResource(R.string.section_check_components),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        color = Color.Black,
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(
+                                Color(0xFFBAB2DD),
+                                androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                    Text(
+                        if (checksExpanded) "▾" else "▸",
+                        fontSize = 28.sp
+                    )
+                }
+                if (checksExpanded) {
                 checks.forEach { c ->
-                    ComponentRow(c)
+                    // Keyed per-package: the box-scan branch below conditionally adds an
+                    // InstalledViaResultsCard, which changes this iteration's composable shape.
+                    // Without a stable key, Compose's slot table can misalign across iterations
+                    // when that shape changes, corrupting remembered state in sibling rows
+                    // (manifested as a ClassCastException on recompose).
+                    key(c.pkg) {
+                        // GBox's "Install to device" feature and Aurora Store both do a real
+                        // package install (not virtualization for GBox's case) — their rows get a
+                        // box-shaped scan action that checks every installed app's installer
+                        // source for that store's package, on-demand only (button tap), since
+                        // checking every app's installer is real per-app IPC cost.
+                        val scanTarget = when (c.pkg) {
+                            "com.gbox.android" -> ScanTarget(gboxScanResult, gboxScanInProgress, { gboxScanResult = it }, { gboxScanInProgress = it }, gboxSortAscending, { gboxSortAscending = it })
+                            "com.aurora.store" -> ScanTarget(auroraScanResult, auroraScanInProgress, { auroraScanResult = it }, { auroraScanInProgress = it }, auroraSortAscending, { auroraSortAscending = it })
+                            "com.android.vending" -> ScanTarget(vendingScanResult, vendingScanInProgress, { vendingScanResult = it }, { vendingScanInProgress = it }, vendingSortAscending, { vendingSortAscending = it })
+                            "com.huawei.appmarket" -> ScanTarget(appgalleryScanResult, appgalleryScanInProgress, { appgalleryScanResult = it }, { appgalleryScanInProgress = it }, appgallerySortAscending, { appgallerySortAscending = it })
+                            else -> null
+                        }
+                        if (scanTarget != null) {
+                            ComponentRow(
+                                c,
+                                onCloseClick = if (scanTarget.result != null) {
+                                    { scanTarget.setResult(null) }
+                                } else null,
+                                onScanClick = {
+                                    closeOtherScanResults(except = c.pkg)
+                                    scanTarget.setInProgress(true)
+                                    scanTarget.setResult(null)
+                                    // Confirmed against Aurora Store's own source (AppInstaller.kt):
+                                    // most install modes (Session/Native/Root/Service/AM/Shizuku)
+                                    // attribute installer = com.aurora.store directly. Only its
+                                    // dedicated "MICROG" mode relays the install through microG
+                                    // Companion (com.android.vending), which then correctly shows
+                                    // as "installed from microG Companion" in system Settings too
+                                    // — so Aurora's scan only matches its own package, matching
+                                    // what Settings actually reports per app.
+                                    scanScope.launch {
+                                        val scanned = DeviceInspector.listAppsInstalledVia(context, setOf(c.pkg))
+                                        scanTarget.setResult(scanned)
+                                        scanTarget.setInProgress(false)
+                                    }
+                                },
+                                scanInProgress = scanTarget.inProgress,
+                                sortAscending = if (scanTarget.result != null) scanTarget.ascending else null,
+                                onSortToggleClick = { scanTarget.setAscending(!scanTarget.ascending) }
+                            )
+                            val scanResult = scanTarget.result
+                            if (scanResult != null) {
+                                InstalledViaResultsCard(results = scanResult, ascending = scanTarget.ascending)
+                            }
+                        } else {
+                            ComponentRow(c)
+                        }
+                    }
                 }
 
                 conflictingGmsApps.forEach { (app, isRealConflict) ->
@@ -993,6 +1166,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             modifier = Modifier.padding(12.dp)
                         )
                     }
+                }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -1170,7 +1344,6 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             // Tier 1 not granted yet — re-summon the permissions card instead
                             // of letting the user into the Target Picker, where capture
                             // couldn't work anyway.
-                            permissionsWidgetVisible = true
                             permissionsExpanded = true
                         }
                     },
@@ -1206,7 +1379,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
             // from below the visible screen every time, regardless of the content's size.
             val slideDistancePx = with(density) { 1000.dp.roundToPx() }
             androidx.compose.animation.AnimatedVisibility(
-                visible = permissionsWidgetVisible && permissionsFloating,
+                visible = permissionsFloating,
                 // Slides up from below the screen edge along the Y axis — low stiffness +
                 // high bounciness makes the spring overshoot past its resting position and
                 // bounce back down a few times before settling, like a jelly popping up from
@@ -1243,6 +1416,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         .fillMaxWidth()
                         .padding(16.dp)
                 )
+            }
             }
             }
         }
@@ -1475,6 +1649,114 @@ private fun PermissionsCardScrollbar(
     }
 }
 
+/** Shows the apps found by a GBox/Aurora Store/microG Companion/AppGallery installer scan,
+ *  indented 15dp to the right of the row that triggered it. Scrollable with a visible
+ *  drag-able scrollbar. The close action and the ascending/descending sort toggle both live on
+ *  the triggering row itself (next to its 📦 icon), not inside this card, since this card's
+ *  own content scrolls — a toggle in here would scroll out of view with the list. */
+@Composable
+fun InstalledViaResultsCard(results: List<CheckedApp>, ascending: Boolean) {
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+    val scrollbarWidth = 8.dp
+    // String.compareTo already orders digits before letters (ASCII), which matches the
+    // "numbers first, then alphabetical" ordering asked for.
+    val sortedResults = remember(results, ascending) {
+        if (ascending) results.sortedBy { it.label } else results.sortedByDescending { it.label }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 15.dp, top = 4.dp, bottom = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFCCD5AE))
+    ) {
+        Box(modifier = Modifier.heightIn(max = 280.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = scrollbarWidth + 4.dp)
+            ) {
+                if (results.isEmpty()) {
+                    Text(
+                        stringResource(R.string.gbox_scan_none_found),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.gbox_scan_found, results.size),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    sortedResults.forEach { app -> ComponentRow(app) }
+                }
+            }
+
+            GenericScrollbar(
+                scrollState = scrollState,
+                coroutineScope = coroutineScope,
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(scrollbarWidth)
+                    .align(Alignment.CenterEnd)
+            )
+        }
+    }
+}
+
+/** Generic ScrollState-driven scrollbar (neutral colors) — same drag-able-thumb mechanics as
+ *  PermissionsCardScrollbar, just not tied to that card's pastel-yellow theme. */
+@Composable
+private fun GenericScrollbar(
+    scrollState: androidx.compose.foundation.ScrollState,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    modifier: Modifier = Modifier
+) {
+    val maxScrollPx = scrollState.maxValue.toFloat()
+    if (maxScrollPx <= 0f) return
+
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier) {
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val trackHeightPx = with(density) { maxHeight.toPx() }
+        val totalContentPx = trackHeightPx + maxScrollPx
+        val thumbFraction = (trackHeightPx / totalContentPx).coerceIn(0.08f, 1f)
+        val thumbHeightPx = trackHeightPx * thumbFraction
+        val scrollFraction = (scrollState.value / maxScrollPx).coerceIn(0f, 1f)
+        val thumbOffsetPx = (trackHeightPx - thumbHeightPx) * scrollFraction
+        val trackRange = (trackHeightPx - thumbHeightPx).coerceAtLeast(1f)
+
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(4.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .offset { androidx.compose.ui.unit.IntOffset(0, thumbOffsetPx.roundToInt()) }
+                .width(6.dp)
+                .height(with(density) { thumbHeightPx.toDp() })
+                .background(
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(3.dp)
+                )
+                .pointerInput(maxScrollPx) {
+                    detectDragGestures(
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val newOffsetPx = (thumbOffsetPx + dragAmount.y).coerceIn(0f, trackRange)
+                            coroutineScope.launch {
+                                scrollState.scrollTo((newOffsetPx / trackRange * maxScrollPx).roundToInt())
+                            }
+                        }
+                    )
+                }
+        )
+    }
+}
+
 @Composable
 fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(vertical = 8.dp))
@@ -1630,33 +1912,178 @@ fun InfoRow(label: String, value: String) {
 }
 
 @Composable
-fun ComponentRow(c: CheckedApp) {
+private fun ComponentAppIcon(pkg: String) {
+    val context = LocalContext.current
+    val bitmap = remember(pkg) {
+        runCatching {
+            context.packageManager.getApplicationIcon(pkg).toBitmap().asImageBitmap()
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = null, modifier = Modifier.size(48.dp))
+    } else {
+        Box(modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceVariant))
+    }
+}
+
+/** Maps a few well-known installer package names to a friendlier display name, for the Basic
+ *  Apps section only — capture logs and Target App Info keep showing the raw package name
+ *  unchanged, since those are meant to be exact/greppable, not pretty. */
+private fun friendlyInstallerName(installer: String?): String = when (installer) {
+    "com.android.vending" -> "microG Companion"
+    "com.android.packageinstaller" -> "Package Installer"
+    "com.aurora.store" -> "Aurora Store"
+    "com.huawei.appmarket" -> "AppGallery"
+    null -> "-"
+    else -> installer
+}
+
+@Composable
+fun ComponentRow(
+    c: CheckedApp,
+    onScanClick: (() -> Unit)? = null,
+    scanInProgress: Boolean = false,
+    onCloseClick: (() -> Unit)? = null,
+    sortAscending: Boolean? = null,
+    onSortToggleClick: (() -> Unit)? = null
+) {
+    val context = LocalContext.current
+    // Apps that expose their own in-app settings screen register an Activity for this action
+    // — if one resolves, a gear shortcut jumps straight there instead of just the generic
+    // system App Info page.
+    val hasOwnSettings = remember(c.pkg, c.installed) {
+        if (!c.installed) false
+        else try {
+            context.packageManager
+                .queryIntentActivities(Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(c.pkg), 0)
+                .isNotEmpty()
+        } catch (e: Exception) {
+            false
+        }
+    }
+    val hasActionRow = (sortAscending != null && onSortToggleClick != null) || onCloseClick != null || onScanClick != null
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (c.installed) "✅" else "❌",
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Text(c.label, style = MaterialTheme.typography.bodyLarge)
-            }
-            Text(c.pkg, style = MaterialTheme.typography.bodySmall)
+        Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(12.dp)
+        ) {
+            // Icon sits beside the whole text block (not inline with the checkmark) — bigger,
+            // and tapping it opens this app's system App Info page.
             if (c.installed) {
+                Box(
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .clickable {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:${c.pkg}")
+                                )
+                            )
+                        }
+                ) {
+                    ComponentAppIcon(pkg = c.pkg)
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (c.installed) "✅" else "❌",
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text(c.label, style = MaterialTheme.typography.bodyLarge)
+                }
+                Text(c.pkg, style = MaterialTheme.typography.bodySmall)
+                if (c.installed) {
+                    Text(
+                        stringResource(R.string.component_version, c.versionName ?: "-", c.versionCode ?: 0L),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        stringResource(R.string.component_installer, friendlyInstallerName(c.installer)),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    c.isSystemApp?.let { isSystem ->
+                        Text(
+                            stringResource(
+                                if (isSystem) R.string.component_system_app else R.string.component_user_app
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.component_not_installed),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            if (hasOwnSettings) {
                 Text(
-                    stringResource(R.string.component_version, c.versionName ?: "-", c.versionCode ?: 0L),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    stringResource(R.string.component_installer, c.installer ?: "-"),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            } else {
-                Text(
-                    stringResource(R.string.component_not_installed),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
+                    "⚙️",
+                    fontSize = 28.sp,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .clickable {
+                            context.startActivity(Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(c.pkg))
+                        }
+                        .padding(6.dp)
                 )
             }
+        }
+        // Sort/close/scan actions sit below a divider rather than inline with the info row —
+        // inline pushed the icon/text block, which carries the actual store details, over to
+        // the left and squeezed it unreadably narrow.
+        if (hasActionRow) {
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                Divider()
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                if (sortAscending != null && onSortToggleClick != null) {
+                    Text(
+                        if (sortAscending) "0-9/A-Z ▲" else "0-9/A-Z ▼",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                            .clickable { onSortToggleClick() }
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+                if (onCloseClick != null) {
+                    Text(
+                        "✕",
+                        color = Color(0xFFE53935),
+                        fontSize = 22.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .clickable { onCloseClick() }
+                            .padding(6.dp)
+                    )
+                }
+                if (onScanClick != null) {
+                    Text(
+                        if (scanInProgress) "⏳" else "📦",
+                        fontSize = 28.sp,
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .clickable(enabled = !scanInProgress) { onScanClick() }
+                            .padding(6.dp)
+                    )
+                }
+            }
+        }
         }
     }
 }

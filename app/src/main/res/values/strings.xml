@@ -27,7 +27,6 @@
     <string name="subsection_ram">RAM</string>
     <string name="info_ram_total">RAM total</string>
     <string name="info_ram_used">RAM used</string>
-    <string name="info_ram_type">RAM type</string>
 
     <string name="subsection_gpu">GPU</string>
     <string name="info_gpu_renderer">GPU renderer</string>
@@ -41,6 +40,8 @@
     <string name="section_check_components">Check Basic Apps for Huawei Device</string>
     <string name="gms_conflict_warning">⚠️ %1$s is installed — its package conflicts with microG (sign-in loops, silent GMS failures). Uninstall it if microG isn\'t working correctly.</string>
     <string name="gms_manager_notice">ℹ️ %1$s is installed — just a patching tool, doesn\'t conflict with microG\'s package by itself.</string>
+    <string name="gbox_scan_none_found">No apps found installed via this store.</string>
+    <string name="gbox_scan_found">%1$d app(s) installed via this store:</string>
     <string name="button_export_log">Get Installed App List + Save Log</string>
     <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
     <string name="status_log_saved">Log saved: %1$s</string>
@@ -55,6 +56,8 @@
     <string name="component_version">Version: %1$s (code %2$d)</string>
     <string name="component_installer">Installed from: %1$s</string>
     <string name="component_not_installed">Not installed</string>
+    <string name="component_system_app">Type: System app</string>
+    <string name="component_user_app">Type: User app</string>
     <string name="emui_not_found">Not found (not an EMUI device, or unreadable)</string>
     <string name="installer_unknown">Unknown source (sideload?)</string>
     <string name="installer_read_failed">Read failed: %1$s</string>
@@ -94,6 +97,20 @@
     <string name="permissions_tier2_label">Tier 2 (optional)</string>
     <string name="tier_badge_none">(Permissions needed)</string>
     <string name="tier_1_missing_hint">Tier 1 only — missing: real logcat stack traces and official process exit reason (crash/ANR/low-memory). Grant READ_LOGS and DUMP via adb on the Home screen for Tier 2.</string>
+    <string name="logcat_commands_bubble_title_running">These commands are running against this app (Tier 2 granted):</string>
+    <string name="logcat_commands_bubble_title_not_running">These commands would run, but are NOT running — Tier 2 not granted:</string>
+    <string name="logcat_commands_bubble_footer">Tap anywhere to dismiss. Read-only — nothing is written, deleted, or modified.</string>
+    <string name="tier1_capability_title">What Tier 1 alone captures right now:</string>
+    <string name="tier1_capability_1">Foreground/background timing (UsageStatsManager)</string>
+    <string name="tier1_capability_2">System "app has stopped" dialog detection (AccessibilityService)</string>
+    <string name="tier1_capability_3">Doze / battery-saver state changes for the whole session</string>
+    <string name="tier1_capability_4">Open TCP socket count at crash/ANR/stall moments (/proc/net/tcp)</string>
+    <string name="logcat_cmd_purpose_1">One-time dump of whatever crash/ANR already happened before this pid was attached</string>
+    <string name="logcat_cmd_purpose_2">Live-follows this app\'s own pid for crash stack traces and native crash signals</string>
+    <string name="logcat_cmd_purpose_3">Watches for ANR entries and discovers this app\'s pid whenever it restarts</string>
+    <string name="logcat_cmd_purpose_4">Watches for low-memory-killer terminations and SELinux denials</string>
+    <string name="logcat_cmd_purpose_5">Watches for GMS/microG API failures (sign-in loops, dead-object errors) mentioning this app</string>
+    <string name="logcat_cmd_purpose_6">Watches the events buffer for am_anr/am_crash entries (optional, toggle in Capture Options)</string>
     <string name="search_apps_label">Search apps</string>
     <string name="search_mode_label">Search by:</string>
     <string name="search_by_name">App name</string>

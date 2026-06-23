@@ -21,6 +21,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -32,6 +34,7 @@ import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import com.debug.molebug.capture.CaptureManager
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -167,10 +170,40 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         map
     }
 
+    // Loads in label-sorted chunks instead of one big blocking call. The real cost here was
+    // never the LazyColumn rendering (it already only composes visible rows) — it was
+    // DeviceInspector.listInstalledApps() looking up the installer source for every single
+    // installed app via getInstallSourceInfo(), a Binder IPC call per app, before returning
+    // anything at all. The picker's rows don't even show installer, so this skips computing
+    // it entirely, and yields between chunks so the first batch renders immediately while the
+    // rest keeps loading in the background instead of one long blocking pass.
     LaunchedEffect(Unit) {
-        apps = DeviceInspector.listInstalledApps(context)
-            .filter { it.pkg != context.packageName }
-            .sortedBy { it.label.lowercase() }
+        // Smaller chunks (20) get the first batch on screen sooner since less work happens
+        // before the very first state update. Also moved the actual fetching/loadLabel work
+        // off the main thread entirely (Dispatchers.Default) — loadLabel() can hit disk to
+        // parse an APK's resources for apps whose label isn't already cached, and doing that
+        // chunk-by-chunk on the main thread was still capable of janking the UI even with
+        // yield() in between, since yield() alone doesn't move work to another thread.
+        val pm = context.packageManager
+        withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val pkgInfos = pm.getInstalledPackages(0).filter { it.packageName != context.packageName }
+            val accumulated = mutableListOf<CheckedApp>()
+            for (chunk in pkgInfos.chunked(20)) {
+                accumulated += chunk.map { pi ->
+                    CheckedApp(
+                        label = pi.applicationInfo?.loadLabel(pm)?.toString() ?: pi.packageName,
+                        pkg = pi.packageName,
+                        installed = true,
+                        versionName = pi.versionName,
+                        versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                            pi.longVersionCode else pi.versionCode.toLong(),
+                        installer = null // not shown in this picker; computing it was the actual bottleneck
+                    )
+                }
+                val sorted = accumulated.sortedBy { it.label.lowercase() }
+                withContext(kotlinx.coroutines.Dispatchers.Main) { apps = sorted }
+            }
+        }
     }
 
     var readLogsOk by remember { mutableStateOf(CaptureManager.hasReadLogsPermission(context)) }
@@ -217,6 +250,24 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
     val allPermsOk = overlayOk && usageOk && a11yOk
     val tier = if (readLogsOk && dumpOk) 2 else if (allPermsOk) 1 else 0
 
+    // Shows the comic-style speech bubble listing the actual logcat commands MoleBug will run
+    // against the target app, right when it's selected — re-shows if the user picks a
+    // different app, since the commands themselves don't change but the transparency moment
+    // is tied to "you just picked a target" specifically.
+    var showCommandBubble by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedPkg) {
+        if (selectedPkg != null) showCommandBubble = true
+    }
+
+    // Bolder, theme-primary-colored ripple here, same reasoning as the Home screen — default
+    // Material ripple is too faint on this screen's small tap targets.
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.foundation.LocalIndication provides androidx.compose.material.ripple.rememberRipple(
+            color = MaterialTheme.colorScheme.primary,
+            bounded = true
+        )
+    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(pageScrollState)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text(stringResource(R.string.back_button)) }
@@ -441,6 +492,178 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 }
             )
         }
+    }
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = showCommandBubble && selectedPkg != null,
+        enter = androidx.compose.animation.expandVertically(
+            expandFrom = Alignment.Top,
+            animationSpec = androidx.compose.animation.core.tween(550)
+        ) + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)),
+        exit = androidx.compose.animation.shrinkVertically(
+            shrinkTowards = Alignment.Top,
+            animationSpec = androidx.compose.animation.core.tween(300)
+        ) + androidx.compose.animation.fadeOut(),
+        modifier = Modifier
+            .fillMaxWidth(0.8f)
+            .fillMaxHeight(0.45f) // shorter than before (was 80% of screen height) — it was
+                                  // reaching down far enough to cover the purple Start
+                                  // Capturing Log button underneath
+            .align(Alignment.Center)
+    ) {
+        LogcatCommandsScroll(
+            tier = tier,
+            onDismiss = { showCommandBubble = false }
+        )
+    }
+
+    // Close button now floats outside the scroll's own bounds — above its top edge — rather
+    // than overlapping the parchment card itself. The scroll box is centered at 80% width /
+    // 45% height, so its top-right corner sits at 90% across and 27.5% down from the top;
+    // this button is placed just above-right of that corner.
+    if (showCommandBubble && selectedPkg != null) {
+        androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val cardTop = maxHeight * 0.275f
+            val cardRight = maxWidth * 0.9f
+            val buttonSize = 28.dp
+            Box(
+                modifier = Modifier
+                    .offset(x = cardRight + 3.dp, y = cardTop - buttonSize - 3.dp)
+                    .size(buttonSize)
+                    .clickable { showCommandBubble = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "✕",
+                    color = Color(0xFFE53935),
+                    fontSize = 22.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+            }
+        }
+    }
+    }
+    }
+}
+
+/** RPG-scroll-styled card listing every actual logcat command MoleBug will run against the
+ *  target app, plus what Tier 1 alone actually captures (everything here needs Tier 2 —
+ *  none of these commands run at all without READ_LOGS, only the non-logcat Tier 1 signals
+ *  do). Parchment color + wooden rod caps top/bottom to read as a scroll; the caller wraps
+ *  this in expandVertically so it visually unrolls open from the top, like unfurling a scroll
+ *  in an RPG. Tap anywhere to dismiss. */
+@Composable
+private fun LogcatCommandsScroll(tier: Int, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    val parchment = Color(0xFFF3E5C3)
+    val rod = Color(0xFF7B4B2A)
+    val bodyShape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+    val rodShape = androidx.compose.foundation.shape.RoundedCornerShape(50)
+
+    Box(modifier = modifier) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .shadow(elevation = 8.dp, shape = bodyShape)
+            .clickable { onDismiss() }
+    ) {
+        // Top wooden rod — drawn slightly wider than the parchment body via a draw-time scale
+        // (Modifier.padding rejects negative values outright — IllegalArgumentException,
+        // confirmed via logcat — graphicsLayer scaling is purely visual, doesn't touch layout
+        // constraints, so it can safely exceed the parent's measured width).
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(16.dp)
+                .graphicsLayer(scaleX = 1.08f)
+                .background(rod, rodShape)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .background(parchment, bodyShape)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            Text(
+                stringResource(R.string.tier1_capability_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.Black
+            )
+            Spacer(Modifier.height(4.dp))
+            // Tier 1 doesn't shell out to logcat at all — these are the actual API calls used
+            // instead, paired with what each one is for, same transparency as the Tier 2
+            // commands below.
+            listOf(
+                R.string.tier1_capability_1 to "UsageStatsManager.queryEvents()",
+                R.string.tier1_capability_2 to "AccessibilityService window-change callback",
+                R.string.tier1_capability_3 to "PowerManager.isDeviceIdleMode() / isPowerSaveMode()",
+                R.string.tier1_capability_4 to "read /proc/net/tcp[6]"
+            ).forEach { (descRes, api) ->
+                Text(
+                    "• ${stringResource(descRes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Black,
+                    modifier = Modifier.padding(vertical = 1.dp, horizontal = 0.dp)
+                )
+                Text(
+                    "   $api",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    color = Color.DarkGray,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+            Divider(color = rod.copy(alpha = 0.4f))
+            Spacer(Modifier.height(10.dp))
+
+            Text(
+                if (tier == 2) stringResource(R.string.logcat_commands_bubble_title_running)
+                else stringResource(R.string.logcat_commands_bubble_title_not_running),
+                style = MaterialTheme.typography.titleSmall,
+                color = if (tier == 2) Color(0xFF2E5A1F) else Color(0xFF8A1F1F)
+            )
+            Spacer(Modifier.height(8.dp))
+            listOf(
+                "logcat -d -v threadtime -b main -b system -b crash" to stringResource(R.string.logcat_cmd_purpose_1),
+                "logcat --pid=<pid> -v threadtime -b main -b crash" to stringResource(R.string.logcat_cmd_purpose_2),
+                "logcat -v threadtime -b system" to stringResource(R.string.logcat_cmd_purpose_3),
+                "logcat -v threadtime -b kernel" to stringResource(R.string.logcat_cmd_purpose_4),
+                "logcat -v threadtime -b main" to stringResource(R.string.logcat_cmd_purpose_5),
+                "logcat -v threadtime -b events" to stringResource(R.string.logcat_cmd_purpose_6)
+            ).forEach { (cmd, purpose) ->
+                Text(
+                    "• $cmd",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    color = Color.Black,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    "   $purpose",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.DarkGray,
+                    modifier = Modifier.padding(bottom = 2.dp)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.logcat_commands_bubble_footer),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.DarkGray
+            )
+        }
+        // Bottom wooden rod, matching the top one.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer(scaleX = 1.08f)
+                .height(16.dp)
+                .background(rod, rodShape)
+        )
+    }
     }
 }
 

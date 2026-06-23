@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4 (versionCode 5)
+
+### Added
+- **"Installed via [Store]" scan** (📦 button) on the microG Companion, Aurora Store, GBox, and AppGallery rows in Check Basic Apps: scans every installed app's installer source and lists which ones actually came from that store, with a friendly installer name mapping for this section.
+- Each scan result list can be sorted ascending/descending by app name (digits before letters), with the sort toggle living on the triggering row itself so it stays visible while the result list scrolls.
+- Only one store's scan result is shown at a time — opening a different store's scan automatically closes whatever was already open.
+- Each app row now shows whether it's a system app or a user-installed app.
+- Check Basic Apps section is now collapsible (collapsed by default), matching Device Information's collapse/expand pattern.
+- Device Information and Check Basic Apps section titles are now highlighted with a colored background for easier scanning.
+- Tap ripple effect across Home and Target Picker is now bolder (theme-colored instead of the faint default) and covers a larger tap area on small icon buttons.
+- Target Picker's "what will actually run" comic-style scroll: its close button now floats just outside the scroll's own card instead of overlapping its top edge.
+- Doze (device idle) and battery-saver transitions are now logged (`[POWER-CHANGE]`) for the whole capture session, not just at crash/ANR time.
+- Render-stall events are now counted and summarized once at session stop (`[RENDER-STALL-SUMMARY]`).
+
+### Changed
+- The Permission Required card no longer pops up automatically a few seconds after opening the app. It now only reopens when "Go to Target App Log Capture" is pressed while Tier 1 permissions are still incomplete (a small pill still floats at the bottom in the meantime).
+- Device Information no longer auto-collapses when scrolled past — it now only collapses/expands on manual tap.
+- RAM Type removed from Device Information, export logs, and capture logs — Huawei/EMUI firmware on the test device doesn't expose this through any public or vendor system property, so it always read as "Unknown".
+
+### Fixed
+- Fixed a crash (`ClassCastException`) when tapping the 📦 scan button, caused by a Compose slot-table mismatch in the Check Basic Apps list.
+- GPU Frequency now reads correctly on Kirin (HiSilicon) devices — added a direct sysfs path (`/sys/class/devfreq/gpufreq/cur_freq`) instead of relying solely on a directory scan that this SoC's SELinux policy blocks for the app's own process.
+
 ## 1.3 (versionCode 4)
 
 ### Added

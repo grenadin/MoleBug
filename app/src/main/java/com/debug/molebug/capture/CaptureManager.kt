@@ -108,7 +108,6 @@ object CaptureManager {
             appendLine("[RAM]")
             appendLine("RAM total: ${deviceInfo.ramTotal}")
             appendLine("RAM used: ${deviceInfo.ramUsed}")
-            appendLine("RAM type: ${deviceInfo.ramType}")
             appendLine("[GPU]")
             appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
             appendLine("GPU frequency: ${deviceInfo.gpuFreqMHz}")

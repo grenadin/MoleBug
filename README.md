@@ -24,16 +24,17 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
 ## Features
 
 ### System Check (Home screen)
-- Device info, shown in a collapsible card (auto-collapses to just the title on scroll, re-expands at the top) and grouped by category — Device, CPU, RAM, GPU, Battery, each independently collapsible:
+- Device info, shown in a card that's manually collapsible (tap the highlighted title) and grouped by category — Device, CPU, RAM, GPU, Battery, each independently collapsible:
   - **Device**: manufacturer/model, EMUI version
   - **CPU**: ABI, cores, vendor, max/realtime frequency per core (live, polled every second) with mini-cards, temperature
-  - **RAM**: total, used (live), type (best-effort vendor property, since Android exposes no public API for it)
+  - **RAM**: total, used (live)
   - **GPU**: renderer string (queried via a throwaway EGL context), realtime frequency, temperature
   - **Battery**: percent, health, charging status
-- Checks 4 required components for a working microG setup: microG Services, Framework Proxy, microG Companion (Play Store substitute), Aurora Store — each with installed version and installer source
+- Checks required components for a working microG setup: microG Services, Framework Proxy, microG Companion (Play Store substitute), Aurora Store, GBox, AppGallery — each with installed version, installer source, and whether it's a system or user app; the section is collapsible (collapsed by default)
+- microG Companion, Aurora Store, GBox, and AppGallery rows have a 📦 scan button that lists every installed app whose installer source actually matches that store, sortable ascending/descending by app name
 - Detects ReVanced/Vanced packages and flags them: red card for ones that actually conflict with microG's package (`com.mgoogle.android.gms`, `app.revanced.android.gms`), yellow card for patching-tool-only apps (`com.vanced.manager`, `app.revanced.manager.flutter`) that don't conflict by themselves
 - Export a full snapshot (device info + component status + every installed app with version/installer) to a text file, with in-app search, collapsible preview, and a Share button
-- A permissions modal pops in a couple seconds after launch, collapses to a small pastel pill once Tier 1 is granted (tap to reopen for Tier 2), and gates the "Go to Target App Log Capture" button until Tier 1 is satisfied
+- A small permissions pill floats at the bottom while Tier 1 isn't fully granted; it only expands into the full Permission Required card when "Go to Target App Log Capture" is pressed and Tier 1 is incomplete, or when tapped directly
 
 ### Target App Capture
 - Pick any installed app, arm capture, and it launches automatically — no manual app-switching
@@ -43,10 +44,11 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
 - **Target App Info** captured in every session's log header: install source, install date, requested permissions with grant state, network data used since install, notification status, and APK MD5/SHA-1/SHA-256 checksums
 - Crash stack traces, ANR detection (system buffer, not pid-filtered), low-memory-killer detection (kernel buffer), official process exit reason (`ActivityManager#getHistoricalProcessExitReasons`)
 - Additional diagnostic detectors for previously-invisible failure modes:
-  - Black-screen/render-stall detection (Choreographer, OpenGLRenderer, MediaCodec/NuPlayer/ExoPlayer signals on the target's own pid)
+  - Black-screen/render-stall detection (Choreographer, OpenGLRenderer, MediaCodec/NuPlayer/ExoPlayer signals on the target's own pid), summarized with a total count at session stop
   - GMS/microG API failure detection (sign-in loops, dead-object errors)
   - SELinux denial detection on the target's uid
   - Native crash signal detection (non-Java crashes)
+  - Doze (device idle) and battery-saver transitions logged for the whole session, not just at crash/ANR time
   - Force-stopped state and free internal storage logged at arm time
 - **Capture Options checklist** (all optional, persisted, default on):
   - Network timing — elapsed time from foreground to crash/ANR

@@ -65,6 +65,13 @@ class CaptureService : Service() {
     private var stallWarned = false
     private val stallHandler = Handler(Looper.getMainLooper())
 
+    // Counts every [RENDER-STALL] hit this session, summarized once at stop — lets you see at
+    // a glance whether a session was riddled with frame drops/playback stalls without having
+    // to scroll through and count them by hand.
+    private var renderStallCount = 0
+
+    private var powerStateReceiver: android.content.BroadcastReceiver? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -75,6 +82,7 @@ class CaptureService : Service() {
                 showOverlay()
                 startBlinking()
                 startUsagePolling()
+                startPowerStateWatcher()
                 if (CaptureManager.hasReadLogsPermission(applicationContext)) {
                     startLogcatCapture()
                 } else {
@@ -189,6 +197,7 @@ class CaptureService : Service() {
                             logPowerStateSnapshot()
                         }
                         if (looksLikeRenderStall(line)) {
+                            renderStallCount++
                             CaptureManager.appendLog(applicationContext, "[RENDER-STALL] $line")
                             CaptureManager.appendLog(applicationContext, "[RENDER-STALL] Process is alive but rendering/playback looks stuck (black-screen style failure) — see line above")
                         }
@@ -428,6 +437,39 @@ class CaptureService : Service() {
         CaptureManager.appendLog(applicationContext, "[POWER] ${powerStateSnapshot()}")
     }
 
+    /** Logs every Doze (device idle) and battery-saver transition for the whole session, not
+     *  just a snapshot at crash/ANR time — so a hang/ANR that lines up with the device
+     *  entering Doze right beforehand reads as "the system throttled it" instead of looking
+     *  like an unexplained app bug. Runs independently of the READ_LOGS/Tier 2 grant since
+     *  it's plain PowerManager broadcasts, no logcat involved. */
+    private fun startPowerStateWatcher() {
+        val filter = android.content.IntentFilter().apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+            }
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (!CaptureManager.isCapturing(applicationContext) && !CaptureManager.isArmed(applicationContext)) return
+                CaptureManager.appendLog(applicationContext, "[POWER-CHANGE] ${powerStateSnapshot()}")
+            }
+        }
+        powerStateReceiver = receiver
+        registerReceiver(receiver, filter)
+    }
+
+    private fun stopPowerStateWatcher() {
+        powerStateReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (e: Exception) {
+                // Already unregistered (e.g. service torn down twice) — fine to ignore.
+            }
+        }
+        powerStateReceiver = null
+    }
+
     /** Catches the case a real device test turned up: an app silently stuck (e.g. a coroutine
      *  awaiting something that never completes) with 0% CPU, no exception, no ANR, and no
      *  pending network socket - nothing else in this service would ever flag it, since there's
@@ -595,6 +637,7 @@ class CaptureService : Service() {
         foregroundSinceMs = 0L
         lastAppLogLineMs = 0L
         stallWarned = false
+        renderStallCount = 0
     }
 
     private fun buildNotification(): Notification {
@@ -785,8 +828,15 @@ class CaptureService : Service() {
     }
 
     private fun stopCaptureInternal(reason: String) {
+        if (renderStallCount > 0) {
+            CaptureManager.appendLog(
+                applicationContext,
+                "[RENDER-STALL-SUMMARY] $renderStallCount render-stall event(s) detected this session"
+            )
+        }
         CaptureManager.stopCapturing(applicationContext, reason)
         blinking = false
+        stopPowerStateWatcher()
         stopLogcatCapture()
         overlayView?.let { windowManager?.removeView(it) }
         overlayView = null

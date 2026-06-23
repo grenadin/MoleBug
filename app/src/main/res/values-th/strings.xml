@@ -1,6 +1,20 @@
 <resources>
     <string name="app_name">MoleBug</string>
     <string name="accessibility_service_description">MoleBug ใช้สิทธิ์นี้เพื่อตรวจจับว่าแอปเป้าหมายขึ้น foreground และตรวจจับหน้าต่าง "แอปหยุดทำงาน" ของระบบ เพื่อเก็บ log เหตุการณ์เท่านั้น ไม่อ่านข้อมูลส่วนตัวในแอปอื่น</string>
+    <string name="logcat_commands_bubble_title_running">คำสั่งเหล่านี้กำลังรันอยู่กับแอปนี้ (ได้ Tier 2 แล้ว):</string>
+    <string name="logcat_commands_bubble_title_not_running">คำสั่งเหล่านี้จะรัน แต่ตอนนี้ยัง "ไม่ได้รัน" — ยังไม่ได้ Tier 2:</string>
+    <string name="logcat_commands_bubble_footer">แตะที่ไหนก็ได้เพื่อปิด — เป็นการอ่านอย่างเดียว ไม่มีการเขียน/ลบ/แก้ไขอะไร</string>
+    <string name="tier1_capability_title">สิ่งที่ Tier 1 จับได้ตอนนี้:</string>
+    <string name="tier1_capability_1">จับเวลา foreground/background (UsageStatsManager)</string>
+    <string name="tier1_capability_2">ตรวจจับหน้าต่าง "แอปหยุดทำงาน" ของระบบ (AccessibilityService)</string>
+    <string name="tier1_capability_3">การเปลี่ยนสถานะ Doze / battery-saver ตลอด session</string>
+    <string name="tier1_capability_4">จำนวน TCP socket ที่เปิดอยู่ตอน crash/ANR/stall (/proc/net/tcp)</string>
+    <string name="logcat_cmd_purpose_1">ดึง crash/ANR ที่เกิดไปแล้วก่อนจะ attach pid ได้ครั้งเดียว</string>
+    <string name="logcat_cmd_purpose_2">ตาม log สด เฉพาะ pid ของแอปนี้ เพื่อหา stack trace และ native crash signal</string>
+    <string name="logcat_cmd_purpose_3">เฝ้าดู ANR และค้นหา pid ใหม่ของแอปนี้ทุกครั้งที่ restart</string>
+    <string name="logcat_cmd_purpose_4">เฝ้าดู low-memory-killer และ SELinux denial</string>
+    <string name="logcat_cmd_purpose_5">เฝ้าดู GMS/microG ที่ทำงานผิดพลาด (sign-in วนลูป, dead-object) ที่เกี่ยวกับแอปนี้</string>
+    <string name="logcat_cmd_purpose_6">เฝ้าดู events buffer หา am_anr/am_crash (ทางเลือก เปิด/ปิดได้ใน Capture Options)</string>
 
     <!-- Home screen -->
     <string name="app_title">MoleBug — Debug Checker</string>
@@ -20,6 +34,8 @@
     <string name="section_check_components">ตรวจสอบแอปพื้นฐานสำหรับเครื่อง Huawei</string>
     <string name="gms_conflict_warning">⚠️ พบแอป %1$s ติดตั้งอยู่ — package ของแอปนี้ขัดแย้งกับ microG (sign-in วนลูป, GMS ทำงานผิดพลาดแบบไม่มีสาเหตุ) แนะนำให้ถอนการติดตั้งถ้า microG ทำงานไม่ถูกต้อง</string>
     <string name="gms_manager_notice">ℹ️ พบแอป %1$s ติดตั้งอยู่ — เป็นแค่เครื่องมือ patch ไฟล์ ไม่ขัดแย้งกับ package ของ microG โดยตรง</string>
+    <string name="gbox_scan_none_found">ไม่พบแอปที่ติดตั้งผ่านสโตร์นี้</string>
+    <string name="gbox_scan_found">พบ %1$d แอปที่ติดตั้งผ่านสโตร์นี้:</string>
     <string name="button_export_log">ดึงรายการแอปที่ติดตั้ง + บันทึก Log</string>
     <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
     <string name="status_log_saved">บันทึก log สำเร็จ: %1$s</string>
@@ -34,6 +50,8 @@
     <string name="component_version">เวอร์ชัน: %1$s (code %2$d)</string>
     <string name="component_installer">แหล่งที่ติดตั้ง: %1$s</string>
     <string name="component_not_installed">ยังไม่ได้ติดตั้ง</string>
+    <string name="component_system_app">ประเภท: แอประบบ (System app)</string>
+    <string name="component_user_app">ประเภท: แอปผู้ใช้ (User app)</string>
     <string name="emui_not_found">ไม่พบ (ไม่ใช่เครื่อง EMUI หรืออ่านไม่ได้)</string>
     <string name="installer_unknown">ไม่ทราบแหล่งที่มา (sideload?)</string>
     <string name="installer_read_failed">อ่านไม่ได้: %1$s</string>
