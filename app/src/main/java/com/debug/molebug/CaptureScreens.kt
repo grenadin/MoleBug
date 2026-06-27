@@ -32,13 +32,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
+import com.debug.molebug.analysis.CategoryBucket
+import com.debug.molebug.analysis.DetailBucket
+import com.debug.molebug.analysis.LogAnalyzer
+import com.debug.molebug.analysis.SdkBucket
 import com.debug.molebug.capture.CaptureManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-enum class Screen { HOME, TARGET_PICKER, LOG_VIEWER }
+enum class Screen { HOME, TARGET_PICKER, LOG_VIEWER, DIAGNOSTIC_SUMMARY }
 
 @Composable
 fun MoleBugRoot(screenState: MutableState<Screen> = remember { mutableStateOf(Screen.HOME) }) {
@@ -55,7 +59,11 @@ fun MoleBugRoot(screenState: MutableState<Screen> = remember { mutableStateOf(Sc
                     onBack = { screen = Screen.HOME },
                     onArmed = { screen = Screen.HOME } // user goes home then taps target app manually
                 )
-                Screen.LOG_VIEWER -> LogViewerScreen(onBack = { screen = Screen.HOME })
+                Screen.LOG_VIEWER -> LogViewerScreen(
+                    onBack = { screen = Screen.HOME },
+                    onOpenDiagnosticSummary = { screen = Screen.DIAGNOSTIC_SUMMARY }
+                )
+                Screen.DIAGNOSTIC_SUMMARY -> DiagnosticSummaryScreen(onBack = { screen = Screen.LOG_VIEWER })
             }
         }
     }
@@ -435,6 +443,7 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         var anrTraceEnabled by remember { mutableStateOf(CaptureManager.isAnrTraceEnabled(context)) }
         var eventsBufferEnabled by remember { mutableStateOf(CaptureManager.isEventsBufferEnabled(context)) }
         var stallWatchdogEnabled by remember { mutableStateOf(CaptureManager.isStallWatchdogEnabled(context)) }
+        var touchWatchdogEnabled by remember { mutableStateOf(CaptureManager.isTouchWatchdogEnabled(context)) }
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -489,6 +498,15 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
                 onCheckedChange = {
                     stallWatchdogEnabled = it
                     CaptureManager.setStallWatchdogEnabled(context, it)
+                }
+            )
+            CaptureOptionRow(
+                checked = touchWatchdogEnabled,
+                label = stringResource(R.string.opt_touch_watchdog_label),
+                hint = stringResource(R.string.opt_touch_watchdog_hint),
+                onCheckedChange = {
+                    touchWatchdogEnabled = it
+                    CaptureManager.setTouchWatchdogEnabled(context, it)
                 }
             )
         }
@@ -774,7 +792,7 @@ private fun CaptureOptionRow(
 /** ---------- Screen: log viewer ---------- */
 
 @Composable
-fun LogViewerScreen(onBack: () -> Unit) {
+fun LogViewerScreen(onBack: () -> Unit, onOpenDiagnosticSummary: () -> Unit) {
     val context = LocalContext.current
     var logText by remember { mutableStateOf(CaptureManager.readLog(context)) }
     val target = CaptureManager.targetPackage(context)
@@ -844,6 +862,11 @@ fun LogViewerScreen(onBack: () -> Unit) {
             ) { Text(stringResource(R.string.button_stop_capture)) }
         }
 
+        Spacer(Modifier.height(8.dp))
+
+        Button(onClick = onOpenDiagnosticSummary, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.button_diagnostic_summary))
+        }
         Spacer(Modifier.height(8.dp))
 
         // Trying to point a file manager straight at a folder via intent/URI turned out to
@@ -995,6 +1018,313 @@ fun LogViewerScreen(onBack: () -> Unit) {
                 },
                 modifier = Modifier.weight(1f)
             ) { Text(stringResource(R.string.button_share_file)) }
+        }
+    }
+}
+
+private val diagnosticCategoryPalette = listOf(
+    Color(0xFFE53935), Color(0xFF1E88E5), Color(0xFF43A047),
+    Color(0xFFFB8C00), Color(0xFF8E24AA), Color(0xFF00897B)
+)
+
+private fun colorForKey(key: String, palette: List<Color>): Color =
+    palette[(key.hashCode().mod(palette.size))]
+
+/** A single horizontal 100%-stacked bar: each [weights] entry becomes one colored, tappable
+ *  segment sized proportionally to its share of the total. The tapped segment grows taller
+ *  than the rest and shows its own percentage inside itself, so the selection is obvious at
+ *  a glance even before reading the labels below. */
+@Composable
+private fun StackedBar(
+    segments: List<Triple<String, Int, Color>>, // key/label id, count, color
+    selectedKey: String?,
+    onSegmentClick: (String) -> Unit,
+    height: androidx.compose.ui.unit.Dp = 28.dp
+) {
+    val total = segments.sumOf { it.second }.coerceAtLeast(1)
+    val selectedHeight = height * 1.6f
+    Row(
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+    ) {
+        segments.forEach { (key, count, color) ->
+            val isSelected = key == selectedKey
+            val percent = count * 100 / total
+            Box(
+                modifier = Modifier
+                    .weight(count.toFloat() / total)
+                    .height(if (isSelected) selectedHeight else height)
+                    .background(if (isSelected) color else color.copy(alpha = 0.6f))
+                    .clickable { onSegmentClick(key) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (isSelected) {
+                    Text(
+                        "$percent%",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A flattened row model for the Diagnostic Summary's [LazyColumn] — every bar, label, and
+ *  detail card is one row so only what's actually on screen ever gets composed, which matters
+ *  once a noisy category (e.g. "Other") fans out into hundreds of distinct log shapes. */
+private sealed class DiagnosticRow {
+    object TotalBar : DiagnosticRow()
+    data class CategoryLabel(val cat: CategoryBucket) : DiagnosticRow()
+    data class SdkBar(val cat: CategoryBucket) : DiagnosticRow()
+    data class SdkLabel(val sdk: SdkBucket) : DiagnosticRow()
+    data class Detail(val detail: DetailBucket) : DiagnosticRow()
+}
+
+// Defensive cap: a sufficiently noisy/unrecognized tag could fan out into an unbounded number
+// of distinct detail buckets (one per unique line shape) — cap how many are ever materialized
+// so a pathological log can't blow up memory even though LazyColumn already keeps rendering cheap.
+private const val MAX_DETAIL_BUCKETS_SHOWN = 300
+
+@Composable
+fun DiagnosticSummaryScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val logLines = remember { CaptureManager.readLog(context).lines() }
+    val categories = remember(logLines) { LogAnalyzer.analyze(logLines) }
+    val totalCount = remember(categories) { categories.sumOf { it.count }.coerceAtLeast(1) }
+
+    // Tapping the total bar (or a category's name) drills into that category's SDK bar; tapping
+    // an SDK segment (or its name) within that drills further into its detail log list. Each tap
+    // reveals exactly one more level — nothing is shown eagerly except the top bar + category names.
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var selectedSdkId by remember { mutableStateOf<String?>(null) }
+
+    // Tapping a category/SDK moves it to the front of its list (stable sort keeps everything
+    // else in its original relative order) so the thing you just drilled into is immediately
+    // visible at the top instead of buried wherever it happened to rank by count.
+    val orderedCategories = remember(categories, selectedCategory) {
+        if (selectedCategory == null) categories
+        else categories.sortedByDescending { it.category == selectedCategory }
+    }
+
+    val rows = remember(orderedCategories, selectedCategory, selectedSdkId) {
+        buildList {
+            add(DiagnosticRow.TotalBar)
+            orderedCategories.forEach { cat ->
+                add(DiagnosticRow.CategoryLabel(cat))
+                if (cat.category == selectedCategory) {
+                    add(DiagnosticRow.SdkBar(cat))
+                    val orderedSdks = if (selectedSdkId == null) cat.sdks
+                        else cat.sdks.sortedByDescending { it.id == selectedSdkId }
+                    orderedSdks.forEach { sdk ->
+                        add(DiagnosticRow.SdkLabel(sdk))
+                        if (sdk.id == selectedSdkId) {
+                            sdk.details.take(MAX_DETAIL_BUCKETS_SHOWN).forEach { add(DiagnosticRow.Detail(it)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    val findings = remember(categories, logLines) { LogAnalyzer.findIssues(categories, logLines) }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text(stringResource(R.string.back_button)) }
+            Text(stringResource(R.string.diagnostic_summary_title), style = MaterialTheme.typography.titleLarge)
+        }
+        Text(
+            stringResource(R.string.diagnostic_summary_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+
+        GlassyCard(color = Color(0xFFC8E6C9), modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    stringResource(R.string.diagnostic_summary_assessment_title),
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    ),
+                    color = Color.Black
+                )
+                Spacer(Modifier.height(4.dp))
+                if (findings.isEmpty()) {
+                    Text(
+                        stringResource(R.string.diagnostic_summary_assessment_none),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Black
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.diagnostic_summary_assessment_found_intro),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Black
+                    )
+                    findings.forEach { finding ->
+                        Text(
+                            stringResource(R.string.diagnostic_summary_assessment_item, finding.label, finding.count),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Black,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.diagnostic_summary_assessment_advice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Black
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (categories.isEmpty()) {
+            Text(stringResource(R.string.diagnostic_summary_empty), style = MaterialTheme.typography.bodyMedium)
+            return@Column
+        }
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 12.dp)) {
+                items(rows) { row ->
+                    when (row) {
+                        is DiagnosticRow.TotalBar -> {
+                            val segments = categories.map {
+                                Triple(it.category, it.count, colorForKey(it.category, diagnosticCategoryPalette))
+                            }
+                            StackedBar(
+                                segments = segments,
+                                selectedKey = selectedCategory,
+                                onSegmentClick = { key ->
+                                    selectedCategory = if (selectedCategory == key) null else key
+                                    selectedSdkId = null
+                                }
+                            )
+                        }
+                        is DiagnosticRow.CategoryLabel -> {
+                            val percent = row.cat.count * 100 / totalCount
+                            Text(
+                                stringResource(R.string.diagnostic_summary_bar_percent, row.cat.category, percent),
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                ),
+                                color = colorForKey(row.cat.category, diagnosticCategoryPalette),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        selectedCategory = if (selectedCategory == row.cat.category) null else row.cat.category
+                                        selectedSdkId = null
+                                    }
+                                    .padding(vertical = 4.dp)
+                            )
+                        }
+                        is DiagnosticRow.SdkBar -> {
+                            Spacer(Modifier.height(12.dp))
+                            val segments = row.cat.sdks.map {
+                                Triple(it.id, it.count, colorForKey(it.id, diagnosticCategoryPalette))
+                            }
+                            StackedBar(
+                                segments = segments,
+                                selectedKey = selectedSdkId,
+                                onSegmentClick = { key -> selectedSdkId = if (selectedSdkId == key) null else key }
+                            )
+                        }
+                        is DiagnosticRow.SdkLabel -> {
+                            val percent = row.sdk.count * 100 / totalCount
+                            Text(
+                                stringResource(
+                                    R.string.diagnostic_summary_bar_percent,
+                                    sdkLabel(row.sdk.company, row.sdk.sdk),
+                                    percent
+                                ),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = colorForKey(row.sdk.id, diagnosticCategoryPalette),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedSdkId = if (selectedSdkId == row.sdk.id) null else row.sdk.id }
+                                    .padding(vertical = 2.dp)
+                            )
+                        }
+                        is DiagnosticRow.Detail -> {
+                            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            stringResource(R.string.diagnostic_summary_detail_count, row.detail.label, row.detail.count),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(
+                                            onClick = { coroutineScope.launch { listState.animateScrollToItem(0) } },
+                                            contentPadding = PaddingValues(horizontal = 8.dp)
+                                        ) { Text(stringResource(R.string.diagnostic_summary_scroll_to_top)) }
+                                    }
+                                    if (row.detail.count > row.detail.sampleLines.size) {
+                                        Text(
+                                            stringResource(
+                                                R.string.diagnostic_summary_sample_note,
+                                                row.detail.sampleLines.size,
+                                                row.detail.count
+                                            ),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    ScrollableLogLines(lines = row.detail.sampleLines)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            LogScrollbar(
+                listState = listState,
+                totalItems = rows.size,
+                coroutineScope = coroutineScope,
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
+            )
+        }
+    }
+}
+
+private fun sdkLabel(company: String, sdk: String): String = if (company.isBlank()) sdk else "$company $sdk"
+
+/** Renders every line for a detail bucket inside a height-capped, virtualized list (so a
+ *  bucket with thousands of matches stays cheap to render) — a scrollbar only appears once
+ *  the content actually overflows that cap; a short bucket just renders flush, no scrollbar. */
+@Composable
+private fun ScrollableLogLines(lines: List<String>, maxHeight: androidx.compose.ui.unit.Dp = 220.dp) {
+    val innerListState = rememberLazyListState()
+    val innerCoroutineScope = rememberCoroutineScope()
+    val canScroll = innerListState.canScrollForward || innerListState.canScrollBackward
+
+    Box(modifier = Modifier.heightIn(max = maxHeight).fillMaxWidth()) {
+        LazyColumn(
+            state = innerListState,
+            modifier = Modifier.fillMaxWidth().then(if (canScroll) Modifier.padding(end = 12.dp) else Modifier)
+        ) {
+            items(lines) { line ->
+                Text(line, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+        if (canScroll) {
+            LogScrollbar(
+                listState = innerListState,
+                totalItems = lines.size,
+                coroutineScope = innerCoroutineScope,
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(16.dp)
+            )
         }
     }
 }

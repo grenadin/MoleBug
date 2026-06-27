@@ -35,6 +35,7 @@ class CaptureService : Service() {
         private const val NOTI_ID = 1001
         private const val POLL_INTERVAL_MS = 1000L
         private const val STALL_THRESHOLD_MS = 15000L
+        private const val UNRESPONSIVE_TOUCH_THRESHOLD_MS = 3000L
     }
 
     private var windowManager: WindowManager? = null
@@ -60,10 +61,13 @@ class CaptureService : Service() {
     private var anrTraceEnabled = true
     private var eventsBufferEnabled = true
     private var stallWatchdogEnabled = true
+    private var touchWatchdogEnabled = true
     private var foregroundSinceMs = 0L
     private var lastAppLogLineMs = 0L
     private var stallWarned = false
+    private var unresponsiveWarned = false
     private val stallHandler = Handler(Looper.getMainLooper())
+    private val unresponsiveHandler = Handler(Looper.getMainLooper())
 
     // Counts every [RENDER-STALL] hit this session, summarized once at stop — lets you see at
     // a glance whether a session was riddled with frame drops/playback stalls without having
@@ -107,6 +111,7 @@ class CaptureService : Service() {
         anrTraceEnabled = CaptureManager.isAnrTraceEnabled(applicationContext)
         eventsBufferEnabled = CaptureManager.isEventsBufferEnabled(applicationContext)
         stallWatchdogEnabled = CaptureManager.isStallWatchdogEnabled(applicationContext)
+        touchWatchdogEnabled = CaptureManager.isTouchWatchdogEnabled(applicationContext)
         dumpLogcatBacklog(pkg)
         startSystemBufferWatcher(pkg)
         startLmkWatcher(pkg)
@@ -114,6 +119,7 @@ class CaptureService : Service() {
         startMemoryPolling()
         if (eventsBufferEnabled) startEventsWatcher(pkg)
         if (stallWatchdogEnabled) startStallWatchdog(pkg)
+        if (touchWatchdogEnabled) startUnresponsiveTouchWatchdog(pkg)
     }
 
     /** A log line is "bulk listing" noise (e.g. Huawei's loadRunningPackages/appLruQueue
@@ -168,6 +174,14 @@ class CaptureService : Service() {
         "DeadObjectException", "ApiException", "SERVICE_VERSION_UPDATE_REQUIRED", "SIGN_IN_REQUIRED"
     )
 
+    /** EMUI's own touch-dispatch instrumentation, tagged with the target's own pid (so it
+     *  arrives here via the --pid filter, not a content match) — proof a touch was *dispatched*
+     *  to the app's main thread, not that the app's own logic actually responded to it. Feeds
+     *  CaptureManager.recordTouchSignal(), compared against recordUiResponseSignal() by the
+     *  unresponsive-touch watchdog below. Quiet by design — only the watchdog actually logs
+     *  anything, so a normal responsive session doesn't get noisier. */
+    private val touchIndicatorKeywords = listOf("HiTouch_PressGestureDetector", "HwDragEnhancementImpl")
+
     /** Streams one `logcat --pid=PID` session on a background reader until it ends or is destroyed.
      *  Pulls from main + crash buffers — crash carries Android's own concise crash summary,
      *  not just whatever the app itself printed to the main buffer. */
@@ -185,6 +199,9 @@ class CaptureService : Service() {
                         CaptureManager.appendLog(applicationContext, "[LOGCAT] $line")
                         lastAppLogLineMs = System.currentTimeMillis()
                         stallWarned = false
+                        if (touchIndicatorKeywords.any { line.contains(it) }) {
+                            CaptureManager.recordTouchSignal()
+                        }
                         if (line.contains("FATAL EXCEPTION") || line.contains("AndroidRuntime")) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-CRASH] Found a real crash stack trace, see lines above")
                             CaptureManager.appendLog(applicationContext, "[NETWORK] ${networkSnapshot()}")
@@ -504,6 +521,47 @@ class CaptureService : Service() {
         stallHandler.postDelayed(r, 5000)
     }
 
+    /** Catches the gap the stall watchdog above can't: EMUI's touch-dispatch instrumentation
+     *  (HiTouch_PressGestureDetector/HwDragEnhancementImpl) keeps printing log lines from the
+     *  target's own pid even while its UI is genuinely frozen — those lines reset
+     *  lastAppLogLineMs, so the 15s stall watchdog never fires. This compares "a touch was
+     *  dispatched" (CaptureManager.recordTouchSignal, fed from those same lines plus the
+     *  events-buffer's input_interaction entries) against "the UI actually responded"
+     *  (CaptureManager.recordUiResponseSignal, fed from MoleAccessibilityService's
+     *  scroll/click/window-change events) on a tight 500ms poll against a 3s threshold — long
+     *  enough that a human would call it frozen, found via a real repro: Aurora Store handing
+     *  an install off to the microG Installer leaves its Downloads page unresponsive for a
+     *  few seconds afterward. Best-effort — EMUI-specific log lines aren't guaranteed on every
+     *  OEM/ROM, and "no response" is inferred from absence of signals, not a guaranteed proof
+     *  of a frozen main thread. */
+    private fun startUnresponsiveTouchWatchdog(pkg: String) {
+        val r = object : Runnable {
+            override fun run() {
+                if (!logcatRunning) return
+                val touchAt = CaptureManager.lastTouchSignalAt()
+                val responseAt = CaptureManager.lastUiResponseAt()
+                if (touchAt != 0L && touchAt > responseAt) {
+                    val elapsed = System.currentTimeMillis() - touchAt
+                    if (elapsed > UNRESPONSIVE_TOUCH_THRESHOLD_MS && !unresponsiveWarned) {
+                        unresponsiveWarned = true
+                        CaptureManager.appendLog(
+                            applicationContext,
+                            "[UNRESPONSIVE-TOUCH] Touch/gesture activity detected ${elapsed}ms ago with no " +
+                                    "confirmed UI response since (no scroll/click/window-change) — $pkg may be frozen"
+                        )
+                        CaptureManager.appendLog(applicationContext, "[MEMORY] pid=$currentPid ${memorySnapshot(currentPid)}")
+                        logPowerStateSnapshot()
+                    }
+                } else {
+                    // A response arrived since the last touch — armed again for the next freeze.
+                    unresponsiveWarned = false
+                }
+                unresponsiveHandler.postDelayed(this, 500)
+            }
+        }
+        unresponsiveHandler.postDelayed(r, 500)
+    }
+
     /** Logs how long the target app had been in the foreground before this crash/ANR — handy
      *  for spotting a pattern like "always dies ~10s after opening" (e.g. an SDK call that
      *  hangs and eventually times out). Falls back to a clear note if no foreground
@@ -560,6 +618,13 @@ class CaptureService : Service() {
                         if (!logcatRunning) return@forEachLine
                         if (line.contains(pkg, ignoreCase = true) && !looksLikeBulkListing(line)) {
                             CaptureManager.appendLog(applicationContext, "[LOGCAT-EVENTS] $line")
+                            // "input_interaction" entries (here, already filtered to lines
+                            // mentioning the target package) are the events-buffer's own touch
+                            // signal — second source for the unresponsive-touch watchdog,
+                            // alongside the HiTouch/HwDragEnhancementImpl lines in attachLogcatForPid.
+                            if (line.contains("input_interaction")) {
+                                CaptureManager.recordTouchSignal()
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -633,10 +698,12 @@ class CaptureService : Service() {
         eventsWatcherProcess = null
         memoryHandler.removeCallbacksAndMessages(null)
         stallHandler.removeCallbacksAndMessages(null)
+        unresponsiveHandler.removeCallbacksAndMessages(null)
         currentPid = -1
         foregroundSinceMs = 0L
         lastAppLogLineMs = 0L
         stallWarned = false
+        unresponsiveWarned = false
         renderStallCount = 0
     }
 

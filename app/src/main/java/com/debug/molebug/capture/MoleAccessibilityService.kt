@@ -29,7 +29,12 @@ class MoleAccessibilityService : AccessibilityService() {
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                     AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED
+                    AccessibilityEvent.TYPE_VIEW_CLICKED or
+                    // Standard, non-intrusive event (unlike TYPE_TOUCH_INTERACTION_START/END,
+                    // which requires enabling touch-exploration mode device-wide) — fires when a
+                    // scrollable view's content actually moves, i.e. confirms the app responded
+                    // to a touch rather than just having one dispatched to it.
+                    AccessibilityEvent.TYPE_VIEW_SCROLLED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -58,6 +63,18 @@ class MoleAccessibilityService : AccessibilityService() {
         // While capturing, log the target app's own window transitions
         if (pkg == target && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             CaptureManager.appendLog(ctx, "[WINDOW] $target window changed: ${event.className}")
+            CaptureManager.recordUiResponseSignal()
+        }
+
+        // Confirms the target's UI actually responded to a touch (scroll moved, or something
+        // was clicked) — feeds the unresponsive-touch watchdog in CaptureService, which compares
+        // this against "touch was dispatched" signals to catch a frozen-but-still-receiving-
+        // input screen (e.g. the Aurora Store / microG-installer freeze this was built for).
+        if (pkg == target &&
+            (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED)
+        ) {
+            CaptureManager.recordUiResponseSignal()
         }
 
         // 2. Detect crash/ANR dialog text from ANY package (system UI shows it, not the target)

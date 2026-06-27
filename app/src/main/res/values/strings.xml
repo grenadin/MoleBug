@@ -43,7 +43,7 @@
     <string name="gbox_scan_none_found">No apps found installed via this store.</string>
     <string name="gbox_scan_found">%1$d app(s) installed via this store:</string>
     <string name="button_export_log">Get Installed App List + Save Log</string>
-    <string name="status_missing_components">Not fully installed yet — the export button appears once all basic apps are installed</string>
+    <string name="button_export_log_in_progress">⏳ กำลังดึงรายการแอป…</string>
     <string name="status_log_saved">Log saved: %1$s</string>
     <string name="status_file_path">File: %1$s</string>
     <string name="exported_log_title">Exported Log Content</string>
@@ -56,6 +56,16 @@
     <string name="component_version">Version: %1$s (code %2$d)</string>
     <string name="component_installer">Installed from: %1$s</string>
     <string name="component_not_installed">Not installed</string>
+    <string name="microg_download_hint">ยังไม่ได้ติดตั้ง microG Services — ไปที่หน้า Assets แล้วโหลดไฟล์ที่ชื่อ "com.google.android.gms-xxxxxxxxx-hw.apk"</string>
+    <string name="microg_companion_download_hint">ยังไม่ได้ติดตั้ง microG Companion — ไปที่หน้า Assets แล้วโหลดไฟล์ที่ชื่อ "com.android.vending-xxxxxxxx-hw.apk"</string>
+    <string name="microg_gsfproxy_download_hint">ยังไม่ได้ติดตั้ง microG Services Framework Proxy — ไปที่หน้า Assets แล้วโหลดไฟล์ที่ชื่อ "GsfProxy.apk"</string>
+    <string name="aurora_huawei_download_hint">ยังไม่ได้ติดตั้ง Aurora Store — แตะลิงก์ด้านล่างเพื่อโหลดเวอร์ชันล่าสุด (เวอร์ชัน Huawei จากชุมชน) ได้เลย หากเป็นเวอร์ชันเก่าไปแล้ว ลองเช็คที่ auroraoss.com/files อีกที</string>
+    <string name="update_check_button">🔄 เช็คอัปเดต</string>
+    <string name="update_check_checking">กำลังเช็ค…</string>
+    <string name="update_check_result">ติดตั้งไว้: %1$s · ชุมชนล่าสุด: %2$s</string>
+    <string name="update_check_available_badge">🔔 อาจมีเวอร์ชันใหม่กว่านี้ — ลองเทียบ/โหลดใหม่ดูได้</string>
+    <string name="update_check_failed">⚠️ เช็คไม่สำเร็จ (ไม่มีอินเทอร์เน็ต?) — แตะเพื่อลองใหม่</string>
+    <string name="update_check_no_huawei_build">⚠️ รีลีสล่าสุดไม่มีไฟล์เวอร์ชัน Huawei — แตะเพื่อลองใหม่</string>
     <string name="component_system_app">Type: System app</string>
     <string name="component_user_app">Type: User app</string>
     <string name="emui_not_found">Not found (not an EMUI device, or unreadable)</string>
@@ -90,6 +100,8 @@
     <string name="opt_events_buffer_hint">Also captures the events log buffer, which sometimes has ANR/WTF entries not in main/system/crash</string>
     <string name="opt_stall_watchdog_label">Stall watchdog</string>
     <string name="opt_stall_watchdog_hint">Flags a silent stuck app (no crash/ANR/log output at all, e.g. a stuck coroutine) with a memory/network snapshot</string>
+    <string name="opt_touch_watchdog_label">Touch watchdog</string>
+    <string name="opt_touch_watchdog_hint">Flags a screen that keeps receiving touch/gesture activity but never confirms a UI response (scroll/click/window-change) for 3s — best-effort, not every OEM/ROM logs the touch-dispatch lines this relies on</string>
     <string name="section_target_app">Target App</string>
     <string name="tier_badge_2">(Tier 2)</string>
     <string name="tier_badge_1">(Tier 1)</string>
@@ -137,6 +149,22 @@
     <string name="button_share_file">Share File</string>
     <string name="no_file_explorer_found">Files app not found on this device</string>
     <string name="copy_to_downloads_failed">Couldn\'t copy the log to Download/MoleBug — opening Files app anyway</string>
+
+    <!-- Diagnostic summary screen -->
+    <string name="button_diagnostic_summary">📊 Diagnostic Summary</string>
+    <string name="diagnostic_summary_title">Diagnostic Summary</string>
+    <string name="diagnostic_summary_empty">No known protection/SDK signatures detected in this log yet</string>
+    <string name="diagnostic_summary_bar_percent">%1$s — %2$d%%</string>
+    <string name="diagnostic_summary_sdk_label">%1$s %2$s</string>
+    <string name="diagnostic_summary_detail_count">%1$s — %2$d occurrence(s)</string>
+    <string name="diagnostic_summary_scroll_to_top">↑ Top</string>
+    <string name="diagnostic_summary_hint">(Tap a bar to see its details)</string>
+    <string name="diagnostic_summary_sample_note">Showing %1$d of %2$d matching lines as a sample — open Log Viewer and search to see the rest</string>
+    <string name="diagnostic_summary_assessment_title">ผลการวิเคราะห์เบื้องต้น</string>
+    <string name="diagnostic_summary_assessment_none">MoleBug ไม่พบข้อผิดพลาดใน Log</string>
+    <string name="diagnostic_summary_assessment_found_intro">MoleBug ตรวจพบสิ่งที่น่าสงสัยจาก Log ดังนี้ (ประเมินคร่าวๆ):</string>
+    <string name="diagnostic_summary_assessment_item">• %1$s — %2$d ครั้ง</string>
+    <string name="diagnostic_summary_assessment_advice">หากยังพบข้อผิดพลาดหรือแอปยังใช้งานไม่ได้ แนะนำให้ติดต่อผู้เชี่ยวชาญเพื่อตรวจสอบเพิ่มเติม</string>
     <string name="copied_to_downloads_hint">Log copied — open Files app and go to Download/MoleBug</string>
     <string name="share_chooser_title">Share log file</string>
     <string name="ai_prompt_capture_log">I\'m attaching an Android debug log captured by MoleBug for the app %1$s. Please analyze it and help me find the cause of the crash/ANR/issue, citing the specific log lines that show the root cause.</string>

@@ -25,11 +25,30 @@ object CaptureManager {
     private const val KEY_OPT_ANR_TRACE = "opt_anr_trace"
     private const val KEY_OPT_EVENTS_BUFFER = "opt_events_buffer"
     private const val KEY_OPT_STALL_WATCHDOG = "opt_stall_watchdog"
+    private const val KEY_OPT_TOUCH_WATCHDOG = "opt_touch_watchdog"
 
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    // Ephemeral, in-memory only (unlike the SharedPreferences-backed state above) — these are
+    // just timestamps a live capture session compares against itself, shared between
+    // CaptureService (touch-dispatch logcat lines) and MoleAccessibilityService (scroll/click/
+    // window-change events) so the unresponsive-touch watchdog can tell "a touch happened" apart
+    // from "the app's own UI actually responded to it".
+    @Volatile private var lastTouchSignalMs = 0L
+    @Volatile private var lastUiResponseMs = 0L
+
+    fun recordTouchSignal() { lastTouchSignalMs = System.currentTimeMillis() }
+    fun recordUiResponseSignal() { lastUiResponseMs = System.currentTimeMillis() }
+    fun lastTouchSignalAt(): Long = lastTouchSignalMs
+    fun lastUiResponseAt(): Long = lastUiResponseMs
+    private fun resetTouchSignals() {
+        lastTouchSignalMs = 0L
+        lastUiResponseMs = 0L
+    }
+
     fun arm(context: Context, targetPackage: String) {
+        resetTouchSignals()
         val dir = File(context.getExternalFilesDir(null), "capture_logs")
         if (!dir.exists()) dir.mkdirs()
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -146,6 +165,7 @@ object CaptureManager {
         val total = crashCount(context)
         appendLog(context, "[SYSTEM] Stopped capturing log — $reason (total $total crash(es))")
         prefs(context).edit().putBoolean(KEY_CAPTURING, false).putBoolean(KEY_ARMED, false).apply()
+        resetTouchSignals()
     }
 
     fun cancelArmed(context: Context) {
@@ -254,4 +274,19 @@ object CaptureManager {
         prefs(context).getBoolean(KEY_OPT_STALL_WATCHDOG, true)
     fun setStallWatchdogEnabled(context: Context, enabled: Boolean) =
         prefs(context).edit().putBoolean(KEY_OPT_STALL_WATCHDOG, enabled).apply()
+
+    /** Flags "touch happened but the app's UI never confirmed a response" — found via a real
+     *  repro: Aurora Store handing an install off to the microG Installer, which returns to
+     *  Aurora's Downloads page but leaves it unresponsive to scroll/touch for a while. EMUI's
+     *  own touch-dispatch instrumentation (HiTouch_PressGestureDetector/HwDragEnhancementImpl)
+     *  keeps logging during that freeze, which would otherwise suppress the stall watchdog
+     *  above — this is a separate, tighter (3s) check specifically for that gap between "a
+     *  touch was dispatched" and "the app actually responded" (scroll/click/window-change).
+     *  Best-effort: EMUI-specific log lines aren't guaranteed on every OEM/ROM, and "no
+     *  response" is inferred from absence of signals rather than a guaranteed proof of a
+     *  frozen main thread. */
+    fun isTouchWatchdogEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_OPT_TOUCH_WATCHDOG, true)
+    fun setTouchWatchdogEnabled(context: Context, enabled: Boolean) =
+        prefs(context).edit().putBoolean(KEY_OPT_TOUCH_WATCHDOG, enabled).apply()
 }

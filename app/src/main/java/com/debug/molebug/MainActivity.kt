@@ -637,10 +637,18 @@ object DeviceInspector {
         }
     }
 
-    fun listInstalledApps(context: Context): List<CheckedApp> {
+    /** Walks every installed package and does one getInstallSourceInfo() IPC call per app to
+     *  resolve its installer — on a device with a couple hundred apps (common on Huawei/EMUI
+     *  ROMs loaded with bloatware) this is easily seconds of IPC, which is exactly what was
+     *  triggering MoleBug's "isn't responding" ANR dialog when this ran inline on the main
+     *  thread from a button's onClick. Dispatched on Dispatchers.Default (same pattern already
+     *  used by listAppsInstalledVia below) so the system never sees a blocked main thread —
+     *  the "Wait" option in that ANR dialog used to work anyway because the work does finish,
+     *  this just stops the dialog from appearing at all. */
+    suspend fun listInstalledApps(context: Context): List<CheckedApp> = withContext(kotlinx.coroutines.Dispatchers.Default) {
         val pm = context.packageManager
         val apps = pm.getInstalledPackages(0)
-        return apps.map {
+        apps.map {
             CheckedApp(
                 label = it.applicationInfo?.loadLabel(pm)?.toString() ?: it.packageName,
                 pkg = it.packageName,
@@ -693,7 +701,7 @@ object DeviceInspector {
             }
         }
 
-    fun exportLog(context: Context, deviceInfo: DeviceInfo, checks: List<CheckedApp>, allApps: List<CheckedApp>): File {
+    suspend fun exportLog(context: Context, deviceInfo: DeviceInfo, checks: List<CheckedApp>, allApps: List<CheckedApp>): File = withContext(kotlinx.coroutines.Dispatchers.IO) {
         val dir = File(context.getExternalFilesDir(null), "logs")
         if (!dir.exists()) dir.mkdirs()
         val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -748,7 +756,7 @@ object DeviceInspector {
         }
 
         file.writeText(sb.toString())
-        return file
+        file
     }
 }
 
@@ -757,8 +765,8 @@ val REQUIRED_COMPONENTS = listOf(
     Triple("microG Services", "com.google.android.gms", "เวอร์ชันของ microG Services"),
     Triple("microG Services Framework Proxy", "com.google.android.gsf", "เวอร์ชันของ Framework Proxy"),
     Triple("microG Companion", "com.android.vending", "เวอร์ชันของ microG companion"),
-    Triple("Aurora Store", "com.aurora.store", "เวอร์ชันของ Aurora"),
-    Triple("GBox", "com.gbox.android", "เวอร์ชันของ GBox"),
+    Triple("Aurora Store (Optional)", "com.aurora.store", "เวอร์ชันของ Aurora"),
+    Triple("GBox (Optional)", "com.gbox.android", "เวอร์ชันของ GBox"),
     Triple("AppGallery", "com.huawei.appmarket", "เวอร์ชันของ AppGallery")
 )
 
@@ -824,7 +832,6 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     val checks = remember {
         REQUIRED_COMPONENTS.map { (label, pkg, _) -> DeviceInspector.checkApp(context, label, pkg) }
     }
-    val allInstalled = checks.all { it.installed }
     val conflictingGmsApps = remember {
         CONFLICTING_GMS_PACKAGES
             .map { (label, pkg, isRealConflict) -> DeviceInspector.checkApp(context, label, pkg) to isRealConflict }
@@ -851,6 +858,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     var appgalleryScanResult by remember { mutableStateOf<List<CheckedApp>?>(null) }
     var appgallerySortAscending by remember { mutableStateOf(true) }
     val scanScope = rememberCoroutineScope()
+    val updateCheckResults = remember { mutableStateMapOf<String, UpdateCheckResult>() }
     // Only one store's result card should be open at a time — tapping a different store's box
     // closes whatever was already showing, instead of stacking multiple results cards.
     fun closeOtherScanResults(except: String) {
@@ -860,6 +868,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
         if (except != "com.huawei.appmarket") appgalleryScanResult = null
     }
     var exportedContent by remember { mutableStateOf<String?>(null) }
+    var exportingLog by remember { mutableStateOf(false) }
 
     var deviceInfoExpanded by remember { mutableStateOf(false) }
     var checksExpanded by remember { mutableStateOf(false) }
@@ -1112,6 +1121,32 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                             "com.huawei.appmarket" -> ScanTarget(appgalleryScanResult, appgalleryScanInProgress, { appgalleryScanResult = it }, { appgalleryScanInProgress = it }, appgallerySortAscending, { appgallerySortAscending = it })
                             else -> null
                         }
+                        val updateTarget = UPDATE_CHECK_TARGETS[c.pkg]
+                        val onCheckUpdateClick: (() -> Unit)? = if (updateTarget != null) {
+                            {
+                                updateCheckResults[c.pkg] = UpdateCheckResult.Loading
+                                scanScope.launch {
+                                    updateCheckResults[c.pkg] = when (updateTarget) {
+                                        is UpdateCheckTarget.GitHub -> {
+                                            val release = UpdateChecker.fetchLatestGithubRelease(
+                                                updateTarget.owner, updateTarget.repo, updateTarget.requireAssetContains
+                                            )
+                                            when {
+                                                release == null -> UpdateCheckResult.Failed
+                                                !release.hasRequiredAsset -> UpdateCheckResult.NoHuaweiBuild
+                                                else -> UpdateCheckResult.Checked(c.versionName, release.tagName)
+                                            }
+                                        }
+                                        is UpdateCheckTarget.GitLab -> {
+                                            val latest = UpdateChecker.fetchLatestGitlabTag(updateTarget.projectId)
+                                            if (latest != null) UpdateCheckResult.Checked(c.versionName, latest)
+                                            else UpdateCheckResult.Failed
+                                        }
+                                    }
+                                }
+                            }
+                        } else null
+
                         if (scanTarget != null) {
                             ComponentRow(
                                 c,
@@ -1138,14 +1173,20 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                                 },
                                 scanInProgress = scanTarget.inProgress,
                                 sortAscending = if (scanTarget.result != null) scanTarget.ascending else null,
-                                onSortToggleClick = { scanTarget.setAscending(!scanTarget.ascending) }
+                                onSortToggleClick = { scanTarget.setAscending(!scanTarget.ascending) },
+                                updateCheckResult = updateCheckResults[c.pkg],
+                                onCheckUpdateClick = onCheckUpdateClick
                             )
                             val scanResult = scanTarget.result
                             if (scanResult != null) {
                                 InstalledViaResultsCard(results = scanResult, ascending = scanTarget.ascending)
                             }
                         } else {
-                            ComponentRow(c)
+                            ComponentRow(
+                                c,
+                                updateCheckResult = updateCheckResults[c.pkg],
+                                onCheckUpdateClick = onCheckUpdateClick
+                            )
                         }
                     }
                 }
@@ -1171,22 +1212,33 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
 
                 Spacer(Modifier.height(16.dp))
 
-                if (allInstalled) {
-                    OutlinedButton(onClick = {
-                        val allApps = DeviceInspector.listInstalledApps(context)
-                        val file = DeviceInspector.exportLog(context, deviceInfo, checks, allApps)
-                        exportedPath = file.absolutePath
-                        exportedContent = file.readText()
-                        statusMsg = context.getString(R.string.status_log_saved, file.name)
-                    }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        exportingLog = true
+                        scanScope.launch {
+                            // Listing every installed package's installer is one IPC call per
+                            // app — on a device loaded with bloatware that's easily seconds of
+                            // work, which used to run inline on the main thread here and trip
+                            // the "MoleBug isn't responding" ANR dialog. Both calls are now
+                            // suspend functions dispatched off the main thread (see
+                            // DeviceInspector.listInstalledApps/exportLog), so this just awaits
+                            // them while the button shows a waiting indicator instead.
+                            val allApps = DeviceInspector.listInstalledApps(context)
+                            val file = DeviceInspector.exportLog(context, deviceInfo, checks, allApps)
+                            exportedPath = file.absolutePath
+                            exportedContent = file.readText()
+                            statusMsg = context.getString(R.string.status_log_saved, file.name)
+                            exportingLog = false
+                        }
+                    },
+                    enabled = !exportingLog,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (exportingLog) {
+                        Text(stringResource(R.string.button_export_log_in_progress))
+                    } else {
                         Text(stringResource(R.string.button_export_log))
                     }
-                } else {
-                    Text(
-                        stringResource(R.string.status_missing_components),
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
                 }
 
                 statusMsg?.let {
@@ -1355,41 +1407,24 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 TextButton(onClick = onOpenLogViewer, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.button_view_log))
                 }
-                if (permissionsFloating) {
-                    // Bottom padding so the permissions card/pill (pinned via the outer Box)
-                    // never sits on top of the last bit of scrollable content.
-                    Spacer(Modifier.height(96.dp))
-                } else {
-                    // Fully granted and collapsed — the pill now flows inline with the page
-                    // instead of floating, so it scrolls away with everything else.
-                    Spacer(Modifier.height(16.dp))
-                    PermissionsPill(
-                        isTier2 = true,
-                        onClick = { permissionsExpanded = true },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                // The pill/card is always pinned to the bottom of the screen now (never inline
+                // in the scrolling content) — this just reserves room so the last bit of
+                // scrollable content doesn't sit underneath it.
+                Spacer(Modifier.height(96.dp))
             }
 
             val density = androidx.compose.ui.platform.LocalDensity.current
             // The pill/card's own height is only ~50-300dp, so sliding by just `fullHeight`
-            // barely travels at all and the spring's overshoot ends up looking like an
-            // in-place pulse rather than real upward motion. Sliding by a fixed, generous
-            // pixel distance (well taller than any phone screen) guarantees it travels up
-            // from below the visible screen every time, regardless of the content's size.
+            // barely travels at all. Sliding by a fixed, generous pixel distance (well taller
+            // than any phone screen) guarantees it travels up from below the visible screen
+            // every time, regardless of the content's size.
             val slideDistancePx = with(density) { 1000.dp.roundToPx() }
             androidx.compose.animation.AnimatedVisibility(
                 visible = permissionsFloating,
-                // Slides up from below the screen edge along the Y axis — low stiffness +
-                // high bounciness makes the spring overshoot past its resting position and
-                // bounce back down a few times before settling, like a jelly popping up from
-                // the bottom.
+                // Plain slide-up + fade, no spring overshoot/bounce.
                 enter = androidx.compose.animation.slideInVertically(
                     initialOffsetY = { slideDistancePx },
-                    animationSpec = androidx.compose.animation.core.spring(
-                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioHighBouncy,
-                        stiffness = androidx.compose.animation.core.Spring.StiffnessVeryLow
-                    )
+                    animationSpec = androidx.compose.animation.core.tween(250)
                 ) + androidx.compose.animation.fadeIn(
                     animationSpec = androidx.compose.animation.core.tween(150)
                 ),
@@ -1417,6 +1452,25 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         .padding(16.dp)
                 )
             }
+
+            // Fully granted and collapsed — the pill stays pinned to the bottom edge instead of
+            // disappearing into the page, but shrinks down to just itself. Tapping it (or any
+            // other trigger that flips permissionsFloating back to true, e.g. a Tier 2 perm
+            // getting revoked) is what pops the full card back out.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !permissionsFloating,
+                enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(200)),
+                exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(150)),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                PermissionsPill(
+                    isTier2 = true,
+                    onClick = { permissionsExpanded = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                )
+            }
             }
             }
         }
@@ -1429,9 +1483,9 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
  *  still tap to come back and grant the optional Tier 2 (READ_LOGS/DUMP) perms whenever they
  *  like. Keeping this off the Target Picker screen means picking a target app and reading
  *  capture results never gets visually crowded out by permission setup. */
-/** The collapsed pastel pill, shared between the floating overlay (while still incomplete or
- *  re-expanded for review) and the inline, scrolls-with-the-page placement once everything is
- *  fully granted. */
+/** The collapsed pastel pill — always pinned to the bottom edge, same as the full card. Tapping
+ *  it (or anything else that flips permissions back to incomplete) is what pops the full card
+ *  back out; it never scrolls away with the page. */
 @Composable
 private fun PermissionsPill(isTier2: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
@@ -1945,7 +1999,9 @@ fun ComponentRow(
     scanInProgress: Boolean = false,
     onCloseClick: (() -> Unit)? = null,
     sortAscending: Boolean? = null,
-    onSortToggleClick: (() -> Unit)? = null
+    onSortToggleClick: (() -> Unit)? = null,
+    updateCheckResult: UpdateCheckResult? = null,
+    onCheckUpdateClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     // Apps that expose their own in-app settings screen register an Activity for this action
@@ -2012,12 +2068,90 @@ fun ComponentRow(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+                    if (onCheckUpdateClick != null) {
+                        when (updateCheckResult) {
+                            null -> TextButton(
+                                onClick = onCheckUpdateClick,
+                                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                            ) { Text(stringResource(R.string.update_check_button)) }
+                            UpdateCheckResult.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                Text(
+                                    stringResource(R.string.update_check_checking),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(start = 6.dp)
+                                )
+                            }
+                            is UpdateCheckResult.Checked -> Column {
+                                Text(
+                                    stringResource(
+                                        R.string.update_check_result,
+                                        updateCheckResult.installed ?: "-",
+                                        updateCheckResult.latest ?: "-"
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                if (hasUpdateAvailable(updateCheckResult.installed, updateCheckResult.latest)) {
+                                    Text(
+                                        stringResource(R.string.update_check_available_badge),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                            UpdateCheckResult.Failed -> Text(
+                                stringResource(R.string.update_check_failed),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.clickable(onClick = onCheckUpdateClick)
+                            )
+                            UpdateCheckResult.NoHuaweiBuild -> Text(
+                                stringResource(R.string.update_check_no_huawei_build),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.clickable(onClick = onCheckUpdateClick)
+                            )
+                        }
+                    }
                 } else {
                     Text(
                         stringResource(R.string.component_not_installed),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error
                     )
+                    val microgDownloadInfo = when (c.pkg) {
+                        "com.google.android.gms" -> Triple(R.string.microg_download_hint, "https://github.com/microg/GmsCore/releases", null)
+                        "com.android.vending" -> Triple(R.string.microg_companion_download_hint, "https://github.com/microg/GmsCore/releases", null)
+                        "com.google.android.gsf" -> Triple(R.string.microg_gsfproxy_download_hint, "https://github.com/microg/GsfProxy/releases", null)
+                        // Points at a specific community-hosted build (currently 4.8.3) rather than
+                        // a release-listing page MoleBug can parse — so the wording below is kept
+                        // version-agnostic ("the latest version") since Aurora may ship a newer
+                        // build than this pinned link before MoleBug itself gets updated to match.
+                        "com.aurora.store" -> Triple(
+                            R.string.aurora_huawei_download_hint,
+                            "https://gitlab.com/-/project/6922885/uploads/b9f5d827145461a2195699660545160a/AuroraStore-4.8.3.apk",
+                            "AuroraStore (Huawei, latest)"
+                        )
+                        else -> null
+                    }
+                    if (microgDownloadInfo != null) {
+                        val (hintRes, downloadUrl, linkLabelOverride) = microgDownloadInfo
+                        Text(
+                            stringResource(hintRes),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            "↗ ${linkLabelOverride ?: downloadUrl.removePrefix("https://")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .clickable {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl)))
+                                }
+                        )
+                    }
                 }
             }
             if (hasOwnSettings) {

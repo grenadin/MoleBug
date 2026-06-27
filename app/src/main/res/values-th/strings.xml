@@ -37,7 +37,6 @@
     <string name="gbox_scan_none_found">ไม่พบแอปที่ติดตั้งผ่านสโตร์นี้</string>
     <string name="gbox_scan_found">พบ %1$d แอปที่ติดตั้งผ่านสโตร์นี้:</string>
     <string name="button_export_log">ดึงรายการแอปที่ติดตั้ง + บันทึก Log</string>
-    <string name="status_missing_components">ยังติดตั้งไม่ครบ — ปุ่มดึงรายการแอปจะปรากฏเมื่อแอปพื้นฐานครบทุกตัว</string>
     <string name="status_log_saved">บันทึก log สำเร็จ: %1$s</string>
     <string name="status_file_path">ไฟล์: %1$s</string>
     <string name="exported_log_title">เนื้อหา Log ที่ Export ได้</string>

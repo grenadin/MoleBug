@@ -30,11 +30,13 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
   - **RAM**: total, used (live)
   - **GPU**: renderer string (queried via a throwaway EGL context), realtime frequency, temperature
   - **Battery**: percent, health, charging status
-- Checks required components for a working microG setup: microG Services, Framework Proxy, microG Companion (Play Store substitute), Aurora Store, GBox, AppGallery — each with installed version, installer source, and whether it's a system or user app; the section is collapsible (collapsed by default)
+- Checks required components for a working microG setup: microG Services, Framework Proxy, microG Companion (Play Store substitute), Aurora Store (Optional), GBox (Optional), AppGallery — each with installed version, installer source, and whether it's a system or user app; the section is collapsible (collapsed by default)
+  - When microG Services, microG Companion, microG Services Framework Proxy, or Aurora Store isn't installed, a hint links straight to the right community download (GitHub releases for microG/GmsCore/GsfProxy, a community-hosted Huawei build for Aurora Store)
+  - An on-demand "Check for updates" button on those same four rows compares the installed version against the latest GitHub/GitLab release
 - microG Companion, Aurora Store, GBox, and AppGallery rows have a 📦 scan button that lists every installed app whose installer source actually matches that store, sortable ascending/descending by app name
 - Detects ReVanced/Vanced packages and flags them: red card for ones that actually conflict with microG's package (`com.mgoogle.android.gms`, `app.revanced.android.gms`), yellow card for patching-tool-only apps (`com.vanced.manager`, `app.revanced.manager.flutter`) that don't conflict by themselves
-- Export a full snapshot (device info + component status + every installed app with version/installer) to a text file, with in-app search, collapsible preview, and a Share button
-- A small permissions pill floats at the bottom while Tier 1 isn't fully granted; it only expands into the full Permission Required card when "Go to Target App Log Capture" is pressed and Tier 1 is incomplete, or when tapped directly
+- Export a full snapshot (device info + component status + every installed app with version/installer) to a text file, with in-app search, collapsible preview, and a Share button — dispatched off the main thread so a device with a lot of installed apps can't trigger an ANR while it's building
+- A small permissions pill always stays pinned to the bottom of the screen (even once fully granted and collapsed, instead of scrolling away with the page); it expands into the full Permission Required card when tapped, when "Go to Target App Log Capture" is pressed with Tier 1 incomplete, or when a permission is later revoked
 
 ### Target App Capture
 - Pick any installed app, arm capture, and it launches automatically — no manual app-switching
@@ -55,8 +57,10 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
   - ANR trace file content — reads `/data/anr` for the full stuck-thread stack trace (not guaranteed readable on every device/ROM)
   - Events buffer — tails `logcat -b events` for `am_anr`/`am_crash` entries
   - Stall watchdog — flags an app that's silently stuck (0% CPU, no crash, no ANR, no log output at all) with a memory/network/socket snapshot
+  - Touch watchdog — flags a screen that keeps receiving touch/gesture activity but never confirms a UI response (scroll/click/window-change) for 3 seconds (`[UNRESPONSIVE-TOUCH]`); built from a real repro where handing an install off to the microG Installer left the calling app's screen frozen for a few seconds afterward with no crash/ANR/stall signal
 - Network socket snapshot (`/proc/net/tcp[6]`) at crash/ANR/stall moments — settles whether the app was actually waiting on a pending network response
 - Log Viewer: search with highlight + jump, a draggable scrollbar, a live scroll-position indicator, and live file-size readout — built for logs running into the thousands of lines; ADB grant commands are shown as a mock terminal instead of a copy button, and a Files-app icon copies the current log to the public `Download/MoleBug` folder and opens the Files app
+- **Diagnostic Summary** (from the Log Viewer): scans the captured log against a growing database of known protection/anti-tamper SDK signatures (currently V-Key V-OS, Google Play Integrity API) plus the touch watchdog above, shown as a tappable 100%-stacked bar you drill into (category → SDK → detail log lines, lazily loaded). A quick assessment card up top gives a plain-language read of whether anything suspicious was found, including a best-effort root-cause guess for any `[UNRESPONSIVE-TOUCH]` hits based on what's actually in the log nearby (not a fixed assumption).
 
 ## Permissions
 
@@ -68,6 +72,7 @@ The `READ_LOGS`/`DUMP` grant only needs to happen **once** per install (survives
 | `QUERY_ALL_PACKAGES` | See every installed app in the target picker | Declared in manifest (this app is sideloaded only, never distributed on Play Store, so the store policy restriction on this permission doesn't apply) |
 | `READ_LOGS` (optional, Tier 2) | Real `logcat` capture | `adb shell pm grant com.debug.molebug android.permission.READ_LOGS` — once |
 | `DUMP` (optional, Tier 2) | Official process exit reason | `adb shell pm grant com.debug.molebug android.permission.DUMP` — once |
+| `INTERNET` | On-demand "Check for updates" against GitHub/GitLab release APIs — only on a button tap, never automatic/background | Declared in manifest (normal permission, no prompt) |
 
 If you have zero access to any PC with `adb`, even once, the app still works fully at Tier 1 — see the in-app hints on the target picker screen.
 

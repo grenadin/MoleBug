@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5 (versionCode 6)
+
+### Added
+- **Diagnostic Summary** screen, reachable from the Log Viewer: scans a captured log against a growing database of known protection/anti-tamper SDK signatures (currently V-Key V-OS and Google Play Integrity API) and renders the breakdown as a tappable 100%-stacked bar — tap a category to drill into its SDKs, tap an SDK to see its detail log lines (lazily loaded, with an internal scrollbar only when content actually overflows).
+  - A quick plain-language assessment card up top says whether anything suspicious was found at all, and now includes root-cause analysis for the new touch-watchdog finding below.
+  - Every captured line counts toward the 100% total, not just lines matching a known signature — unmatched lines land in an "Other" category, split out by logcat tag (or bracket marker like `[GRANTED]`/`[WINDOW]` when no tag is parseable) instead of fanning out into one card per distinct message.
+- **Touch watchdog** (new Capture Option, on by default): flags a screen that keeps receiving touch/gesture activity but never confirms a UI response (scroll/click/window-change) for 3 seconds — `[UNRESPONSIVE-TOUCH]` in the log. Found via a real repro: Aurora Store handing an install off to the microG Installer can leave its Downloads page frozen for a few seconds afterward, with no ANR/crash/stall signal MoleBug previously had any way to catch.
+- **Update checker** for the three microG/Aurora rows in Check Basic Apps: an on-demand "Check for updates" button compares the installed version against the latest GitHub (microG GmsCore/GsfProxy) or GitLab (Aurora Store) release.
+- Download hints with direct links for microG Services, microG Companion, microG Services Framework Proxy, and Aurora Store (Huawei build) when not installed.
+- Aurora Store and GBox rows labeled "(Optional)" in Check Basic Apps.
+
+### Changed
+- The Permission Required card/pill now stays pinned to the bottom of the Home screen at all times (including once fully granted and collapsed) instead of scrolling away with the page — it only expands back out when tapped or re-triggered by a permission change.
+- The Permission Required card's pop-in animation no longer has a bouncy spring overshoot — plain slide-up + fade now.
+- "Get Installed App List + Save Log" no longer runs on the main thread — it was capable of triggering an ANR on devices with a lot of installed apps (one IPC call per app). Now dispatched off-thread with a "⏳ กำลังดึงรายการแอป…" loading state on the button.
+
+### Fixed
+- `return` inside a `withContext` block (not legal for a `noinline` lambda parameter) in the export-log path.
+
 ## 1.4 (versionCode 5)
 
 ### Added
