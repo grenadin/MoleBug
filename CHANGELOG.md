@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.1 (versionCode 7)
+
+### Added
+- AppGallery and GBox rows in Check Basic Apps now show a download link when not installed (official Huawei AppGallery page / gboxlab.com), matching the existing microG/Aurora Store hints.
+- App version number now shown under the logo on the Home screen.
+- AppGallery row moved above GBox in Check Basic Apps.
+
+### Changed
+- microG Services/Companion "wrong build" detection simplified: now reads the installed `-hw` flavor suffix directly off `versionName` (confirmed baked in at compile time by GmsCore's own `productFlavors` block) instead of comparing file sizes against a GitHub release asset over the network — no network call needed, and it's exact instead of a heuristic.
+- Update-check version comparison for microG Services/Companion now parses the exact versionCode out of the matching GitHub release asset's own filename, scoped to the correct package's asset specifically (fixes a mismatch where `com.android.vending` could accidentally compare against `com.google.android.gms`'s asset in the same release).
+
+### Fixed
+- Home screen's Device Information could show a block of blank space after a Huawei Mate X6 folds/unfolds (switches between its two physical displays) — `pageScrollState`'s saved scroll offset no longer survives a screen-size change in a way that leaves it stranded relative to content that didn't grow to match.
+- `InfoRow`'s label could be squeezed out entirely on a very narrow display (confirmed on the Mate X6's ~345dp-wide cover screen in portrait) when its value was long — label and value now split the row width evenly instead of value getting first claim.
+- Reduced Home screen's side margins (16dp→8dp page padding, 12dp→4dp inside the Device Information card) so narrow displays have more room for label/value text before wrapping.
+
 ## 1.5 (versionCode 6)
 
 ### Added

@@ -275,7 +275,12 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
             bounded = true
         )
     ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    // Sized off the screen's own available height (works the same in portrait or landscape,
+    // and on a tablet/large display) instead of a fixed dp value tuned for one phone — on a
+    // bigger screen this grows so more rows are visible at once instead of leaving blank
+    // space below the list, down to about a phone's worth of rows as a floor on small screens.
+    val targetListHeight = (maxHeight * 0.45f).coerceAtLeast(280.dp)
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(pageScrollState)) {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text(stringResource(R.string.back_button)) }
@@ -340,10 +345,12 @@ fun TargetPickerScreen(onBack: () -> Unit, onArmed: () -> Unit) {
         }
         Spacer(Modifier.height(2.dp))
 
-        // Shortened by roughly one list row's height (~72dp) from the original 420dp so the
-        // "Start Capturing Log" button below stays visible without scrolling — otherwise
-        // users who never scroll the app list wouldn't realize it's scrollable at all.
-        Row(modifier = Modifier.height(348.dp).fillMaxWidth()) {
+        // Height now scales with the screen's own available space (computed above as
+        // targetListHeight) instead of a fixed dp tuned for one phone — see that comment for
+        // why. The page still scrolls as a whole, so this never blocks reaching the
+        // "Start Capturing Log" button below; it just shows more rows at once when there's
+        // room to.
+        Row(modifier = Modifier.height(targetListHeight).fillMaxWidth()) {
             LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxHeight()) {
                 items(displayedApps) { app ->
                     ListItem(

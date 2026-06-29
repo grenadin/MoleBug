@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.WindowManager
 import com.debug.molebug.capture.CaptureManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -87,9 +88,24 @@ data class DeviceInfo(
     val cpuTempC: String,
     val gpuFreqMHz: String,
     val gpuTempC: String,
+    val gpuGlEsVersion: String,
+    val gpuVulkanVersion: String,
     val batteryPercent: String,
     val batteryHealth: String,
-    val batteryStatus: String
+    val batteryStatus: String,
+    // Refresh rate matters directly for render-stall diagnosis: a 120Hz panel needs sub-8.3ms
+    // frames to avoid a "Skipped frames" hit, vs ~16.6ms at 60Hz — knowing which rate was
+    // actually active explains why the same render workload stalls on one device but not
+    // another. Resolution/supported-rate list are the context needed to read that number.
+    val displayResolution: String,
+    val displayRefreshRateCurrent: String,
+    val displayRefreshRatesSupported: String,
+    // Free space is already logged once at arm time (CaptureManager.arm()) for install-failure
+    // diagnosis — surfaced here too so it's visible up front while looking at a device, not
+    // just buried in a capture log header after the fact.
+    val storageTotal: String,
+    val storageUsed: String,
+    val storageFree: String
 )
 
 /** Live values that change second-to-second — polled on a timer by the UI, separate from the
@@ -153,9 +169,17 @@ object DeviceInspector {
             cpuTempC = readCpuTempC(),
             gpuFreqMHz = readGpuFreqMHz(),
             gpuTempC = readGpuTempC(),
+            gpuGlEsVersion = readGlEsVersion(context),
+            gpuVulkanVersion = readVulkanVersion(context),
             batteryPercent = readBatteryPercent(context),
             batteryHealth = readBatteryHealth(context),
-            batteryStatus = readBatteryStatus(context)
+            batteryStatus = readBatteryStatus(context),
+            displayResolution = readDisplayResolution(context),
+            displayRefreshRateCurrent = readDisplayRefreshRateCurrent(context),
+            displayRefreshRatesSupported = readDisplaySupportedRefreshRates(context),
+            storageTotal = readStorageTotal(),
+            storageUsed = readStorageUsed(),
+            storageFree = readStorageFree()
         )
     }
 
@@ -471,6 +495,103 @@ object DeviceInspector {
         }
     }
 
+    /** OpenGL ES version actually supported by this device's driver, via
+     *  ActivityManager.getDeviceConfigurationInfo() — the standard, EGL-context-free way to
+     *  read it (Build.* has no field for it). Relevant to render-stall diagnosis: an app
+     *  requesting a GLES feature/extension above what the driver reports here is a concrete,
+     *  checkable reason rendering could be silently falling back or failing. */
+    private fun readGlEsVersion(context: Context): String {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            am.deviceConfigurationInfo.glEsVersion ?: "unavailable"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Vulkan API version supported, decoded from the "android.hardware.vulkan.version"
+     *  system feature's encoded version int (major/minor/patch packed per the Vulkan spec's
+     *  own VK_MAKE_VERSION macro: major<<22 | minor<<12 | patch). Same diagnostic relevance as
+     *  GLES version above — relevant for apps/renderers that specifically target Vulkan. */
+    private fun readVulkanVersion(context: Context): String {
+        return try {
+            val feature = context.packageManager.systemAvailableFeatures
+                ?.firstOrNull { it.name == "android.hardware.vulkan.version" }
+                ?: return "not supported"
+            val v = feature.version
+            if (v <= 0) return "not supported"
+            "${v shr 22}.${(v shr 12) and 0x3ff}.${v and 0xfff}"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Current display resolution in pixels, via the legacy Display APIs (still the simplest
+     *  cross-version path; deprecated but functional, same tolerance for deprecated APIs as
+     *  the rest of this codebase already has). */
+    private fun readDisplayResolution(context: Context): String {
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val metrics = android.graphics.Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(metrics)
+            "${metrics.x} x ${metrics.y}"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Refresh rate actually active right now — matters for render-stall diagnosis since the
+     *  per-frame time budget that turns into a "Skipped frames" hit is directly tied to this
+     *  (≈16.6ms at 60Hz vs ≈8.3ms at 120Hz for the same workload). */
+    private fun readDisplayRefreshRateCurrent(context: Context): String {
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            @Suppress("DEPRECATION")
+            "${wm.defaultDisplay.refreshRate.let { "%.0f".format(it) }} Hz"
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Every refresh rate this display can switch to — context for the current rate above,
+     *  since some devices vary it dynamically (e.g. drop to 60Hz to save battery) which would
+     *  otherwise look like an unexplained change between two captures on the same device. */
+    private fun readDisplaySupportedRefreshRates(context: Context): String {
+        return try {
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            @Suppress("DEPRECATION")
+            val rates = wm.defaultDisplay.supportedModes.map { it.refreshRate }.distinct().sorted()
+            rates.joinToString(", ") { "%.0f Hz".format(it) }
+        } catch (e: Exception) {
+            "unavailable: ${e.message}"
+        }
+    }
+
+    /** Total/used/free internal storage via StatFs — same mechanism CaptureManager.arm()
+     *  already uses for the one-time "free storage at arm time" log line, surfaced here too as
+     *  a persistent Device Info field instead of only appearing after the fact in a capture log. */
+    private fun readStorageTotal(): String = try {
+        val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+        "${(stat.totalBytes) / (1024 * 1024)} MB"
+    } catch (e: Exception) {
+        "unavailable: ${e.message}"
+    }
+
+    private fun readStorageFree(): String = try {
+        val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+        "${(stat.availableBytes) / (1024 * 1024)} MB"
+    } catch (e: Exception) {
+        "unavailable: ${e.message}"
+    }
+
+    private fun readStorageUsed(): String = try {
+        val stat = android.os.StatFs(android.os.Environment.getDataDirectory().path)
+        "${(stat.totalBytes - stat.availableBytes) / (1024 * 1024)} MB"
+    } catch (e: Exception) {
+        "unavailable: ${e.message}"
+    }
+
     /** Reads a system property via reflection on android.os.SystemProperties (no root needed for readable props) */
     private fun getProp(key: String): String {
         return try {
@@ -735,10 +856,20 @@ object DeviceInspector {
         sb.appendLine("GPU renderer: ${deviceInfo.gpuRenderer}")
         sb.appendLine("GPU frequency: ${deviceInfo.gpuFreqMHz}")
         sb.appendLine("GPU temperature: ${deviceInfo.gpuTempC}")
+        sb.appendLine("GPU OpenGL ES version: ${deviceInfo.gpuGlEsVersion}")
+        sb.appendLine("GPU Vulkan version: ${deviceInfo.gpuVulkanVersion}")
         sb.appendLine("[Battery]")
         sb.appendLine("Battery percent: ${deviceInfo.batteryPercent}")
         sb.appendLine("Battery health: ${deviceInfo.batteryHealth}")
         sb.appendLine("Battery status: ${deviceInfo.batteryStatus}")
+        sb.appendLine("[Display]")
+        sb.appendLine("Resolution: ${deviceInfo.displayResolution}")
+        sb.appendLine("Current refresh rate: ${deviceInfo.displayRefreshRateCurrent}")
+        sb.appendLine("Supported refresh rates: ${deviceInfo.displayRefreshRatesSupported}")
+        sb.appendLine("[Storage]")
+        sb.appendLine("Total storage: ${deviceInfo.storageTotal}")
+        sb.appendLine("Used storage: ${deviceInfo.storageUsed}")
+        sb.appendLine("Free storage: ${deviceInfo.storageFree}")
         sb.appendLine()
         sb.appendLine("---- Required Components ----")
         checks.forEach {
@@ -766,8 +897,8 @@ val REQUIRED_COMPONENTS = listOf(
     Triple("microG Services Framework Proxy", "com.google.android.gsf", "เวอร์ชันของ Framework Proxy"),
     Triple("microG Companion", "com.android.vending", "เวอร์ชันของ microG companion"),
     Triple("Aurora Store (Optional)", "com.aurora.store", "เวอร์ชันของ Aurora"),
-    Triple("GBox (Optional)", "com.gbox.android", "เวอร์ชันของ GBox"),
-    Triple("AppGallery", "com.huawei.appmarket", "เวอร์ชันของ AppGallery")
+    Triple("AppGallery", "com.huawei.appmarket", "เวอร์ชันของ AppGallery"),
+    Triple("GBox (Optional)", "com.gbox.android", "เวอร์ชันของ GBox")
 )
 
 /** ReVanced/Vanced's own bundled GmsCore implementations declare the same package name and
@@ -879,6 +1010,8 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
     var ramSubExpanded by remember { mutableStateOf(true) }
     var gpuSubExpanded by remember { mutableStateOf(true) }
     var batterySubExpanded by remember { mutableStateOf(true) }
+    var displaySubExpanded by remember { mutableStateOf(true) }
+    var storageSubExpanded by remember { mutableStateOf(true) }
     LaunchedEffect(deviceInfoExpanded) {
         while (deviceInfoExpanded) {
             liveStats = DeviceInspector.readLiveDeviceStats(context)
@@ -886,6 +1019,23 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
         }
     }
     val pageScrollState = rememberScrollState()
+
+    // On a foldable, fold/unfold changes the window's screen-size config, which Android handles
+    // by destroying and recreating this Activity (confirmed via adb logcat: "Config is
+    // relaunching ... changes=0x100", CONFIG_SCREEN_SIZE) — rememberScrollState's pixel offset
+    // survives that recreation via rememberSaveable, but the content's total height doesn't grow
+    // to match a much taller unfolded window, so restoring the old (now-stale) offset leaves a
+    // block of empty space below whatever content happens to land there. Detecting a screen-size
+    // change and snapping back to the top avoids landing on a now-meaningless old offset.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val currentScreenSizeKey = "${configuration.screenWidthDp}x${configuration.screenHeightDp}"
+    var lastScreenSizeKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(currentScreenSizeKey) }
+    LaunchedEffect(currentScreenSizeKey) {
+        if (currentScreenSizeKey != lastScreenSizeKey) {
+            lastScreenSizeKey = currentScreenSizeKey
+            pageScrollState.scrollTo(0)
+        }
+    }
 
     // Permissions live on the Home screen now, as a modal-style card pinned to the bottom of
     // the screen instead of taking up space inline in the Target Picker — that screen's job is
@@ -949,7 +1099,11 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(pageScrollState)
-                    .padding(16.dp)
+                    // Narrower side padding than before (8dp vs the original 16dp) — on a very
+                    // narrow display (e.g. a foldable's ~345dp cover screen) every dp of margin
+                    // is a meaningful fraction of the available text width, and label/value
+                    // rows there were wrapping more than necessary.
+                    .padding(horizontal = 8.dp, vertical = 16.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -961,11 +1115,26 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         style = MaterialTheme.typography.headlineSmall,
                         modifier = Modifier.weight(1f)
                     )
-                    Image(
-                        painter = androidx.compose.ui.res.painterResource(R.drawable.mole_badge),
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp)
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Image(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.mole_badge),
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        val versionName = remember {
+                            try {
+                                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        if (versionName != null) {
+                            Text(
+                                stringResource(R.string.app_version, versionName),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
 
@@ -1001,7 +1170,7 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                         }
 
                         if (deviceInfoExpanded) {
-                        Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                        Column(modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 12.dp)) {
                             CollapsibleSubsectionLabel(
                                 stringResource(R.string.subsection_device),
                                 expanded = deviceSubExpanded,
@@ -1058,6 +1227,32 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                                 InfoRow(stringResource(R.string.info_gpu_renderer), deviceInfo.gpuRenderer)
                                 InfoRow(stringResource(R.string.info_gpu_freq), liveStats.gpuFreqMHz)
                                 InfoRow(stringResource(R.string.info_gpu_temp), liveStats.gpuTempC)
+                                InfoRow(stringResource(R.string.info_gpu_gles), deviceInfo.gpuGlEsVersion)
+                                InfoRow(stringResource(R.string.info_gpu_vulkan), deviceInfo.gpuVulkanVersion)
+                            }
+
+                            Divider(modifier = Modifier.padding(vertical = 6.dp))
+                            CollapsibleSubsectionLabel(
+                                stringResource(R.string.subsection_display),
+                                expanded = displaySubExpanded,
+                                onToggle = { displaySubExpanded = !displaySubExpanded }
+                            )
+                            if (displaySubExpanded) {
+                                InfoRow(stringResource(R.string.info_display_resolution), deviceInfo.displayResolution)
+                                InfoRow(stringResource(R.string.info_display_refresh_current), deviceInfo.displayRefreshRateCurrent)
+                                InfoRow(stringResource(R.string.info_display_refresh_supported), deviceInfo.displayRefreshRatesSupported)
+                            }
+
+                            Divider(modifier = Modifier.padding(vertical = 6.dp))
+                            CollapsibleSubsectionLabel(
+                                stringResource(R.string.subsection_storage),
+                                expanded = storageSubExpanded,
+                                onToggle = { storageSubExpanded = !storageSubExpanded }
+                            )
+                            if (storageSubExpanded) {
+                                InfoRow(stringResource(R.string.info_storage_total), deviceInfo.storageTotal)
+                                InfoRow(stringResource(R.string.info_storage_used), deviceInfo.storageUsed)
+                                InfoRow(stringResource(R.string.info_storage_free), deviceInfo.storageFree)
                             }
 
                             Divider(modifier = Modifier.padding(vertical = 6.dp))
@@ -1129,18 +1324,40 @@ fun MoleBugApp(onOpenCapture: () -> Unit = {}, onOpenLogViewer: () -> Unit = {})
                                     updateCheckResults[c.pkg] = when (updateTarget) {
                                         is UpdateCheckTarget.GitHub -> {
                                             val release = UpdateChecker.fetchLatestGithubRelease(
-                                                updateTarget.owner, updateTarget.repo, updateTarget.requireAssetContains
+                                                updateTarget.owner, updateTarget.repo,
+                                                updateTarget.requireAssetContains, updateTarget.assetPrefix
                                             )
                                             when {
                                                 release == null -> UpdateCheckResult.Failed
                                                 !release.hasRequiredAsset -> UpdateCheckResult.NoHuaweiBuild
-                                                else -> UpdateCheckResult.Checked(c.versionName, release.tagName)
+                                                // gms/vending: exact versionCode parsed straight out of the
+                                                // matched "-hw.apk" asset's own filename — apples to apples
+                                                // against this flavor specifically, no suffix guessing.
+                                                release.matchedAssetVersionCode != null -> UpdateCheckResult.Checked(
+                                                    installed = c.versionCode?.toString(),
+                                                    latest = release.matchedAssetVersionCode.toString(),
+                                                    updateAvailable = hasUpdateAvailable(c.versionCode, release.matchedAssetVersionCode)
+                                                )
+                                                // GsfProxy etc. — no per-flavor asset filename to parse a
+                                                // versionCode out of, fall back to the repo-wide tag string.
+                                                else -> UpdateCheckResult.Checked(
+                                                    installed = c.versionName,
+                                                    latest = release.tagName,
+                                                    updateAvailable = hasUpdateAvailable(c.versionName, release.tagName)
+                                                )
                                             }
                                         }
                                         is UpdateCheckTarget.GitLab -> {
                                             val latest = UpdateChecker.fetchLatestGitlabTag(updateTarget.projectId)
-                                            if (latest != null) UpdateCheckResult.Checked(c.versionName, latest)
-                                            else UpdateCheckResult.Failed
+                                            if (latest != null) {
+                                                UpdateCheckResult.Checked(
+                                                    installed = c.versionName,
+                                                    latest = latest,
+                                                    updateAvailable = hasUpdateAvailable(c.versionName, latest)
+                                                )
+                                            } else {
+                                                UpdateCheckResult.Failed
+                                            }
                                         }
                                     }
                                 }
@@ -1957,11 +2174,23 @@ fun CpuCoreCard(core: CpuCoreFreq, modifier: Modifier = Modifier) {
     }
 }
 
+/** On a very narrow display (confirmed via adb on a Huawei Mate X6's ~345dp-wide cover screen
+ *  in portrait), giving [value] no weight at all let it claim however much width its text
+ *  wanted before [label] got whatever was left — once a long value (e.g. a build number string)
+ *  wanted more than half the row, [label] could be squeezed to nothing and the row's measured
+ *  height came out wrong, leaving a block of blank space below it. Giving both Texts an equal
+ *  weight(1f) guarantees each one a fixed half of the row no matter how narrow the screen is —
+ *  a long value just wraps within its own half instead of starving the label. */
 @Composable
 fun InfoRow(label: String, value: String) {
     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End
+        )
     }
 }
 
@@ -2018,7 +2247,18 @@ fun ComponentRow(
         }
     }
     val hasActionRow = (sortAscending != null && onSortToggleClick != null) || onCloseClick != null || onScanClick != null
-    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    // Local, no-network check: GmsCore's "huawei" flavor bakes "-hw" into its own versionName at
+    // compile time (confirmed in its build.gradle's productFlavors block), so the installed
+    // versionName already says which flavor is on the device — no update-check button needed.
+    val isWrongHuaweiVariant = c.installed && c.pkg in HUAWEI_BUILD_REQUIRED_PACKAGES && !isHuaweiFlavor(c.versionName)
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = if (isWrongHuaweiVariant) {
+            CardDefaults.cardColors(containerColor = Color(0xFFE53935), contentColor = Color.White)
+        } else {
+            CardDefaults.cardColors()
+        }
+    ) {
         Column {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -2056,6 +2296,14 @@ fun ComponentRow(
                         stringResource(R.string.component_version, c.versionName ?: "-", c.versionCode ?: 0L),
                         style = MaterialTheme.typography.bodySmall
                     )
+                    if (isWrongHuaweiVariant) {
+                        Text(
+                            stringResource(R.string.wrong_huawei_variant_warning),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                            )
+                        )
+                    }
                     Text(
                         stringResource(R.string.component_installer, friendlyInstallerName(c.installer)),
                         style = MaterialTheme.typography.bodySmall
@@ -2091,7 +2339,7 @@ fun ComponentRow(
                                     ),
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                if (hasUpdateAvailable(updateCheckResult.installed, updateCheckResult.latest)) {
+                                if (updateCheckResult.updateAvailable) {
                                     Text(
                                         stringResource(R.string.update_check_available_badge),
                                         style = MaterialTheme.typography.bodySmall,
@@ -2131,6 +2379,12 @@ fun ComponentRow(
                             R.string.aurora_huawei_download_hint,
                             "https://gitlab.com/-/project/6922885/uploads/b9f5d827145461a2195699660545160a/AuroraStore-4.8.3.apk",
                             "AuroraStore (Huawei, latest)"
+                        )
+                        "com.gbox.android" -> Triple(R.string.gbox_download_hint, "https://gboxlab.com/", null)
+                        "com.huawei.appmarket" -> Triple(
+                            R.string.appgallery_download_hint,
+                            "https://consumer.huawei.com/en/mobileservices/appgallery/",
+                            null
                         )
                         else -> null
                     }
